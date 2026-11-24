@@ -239,9 +239,21 @@ fn uia_element_anchor() -> Option<RECT> {
         if ew <= 0 || eh <= 0 {
             return None;
         }
+        // 只接受「确实能放文本」的元素：Edit 控件，或带 TextPattern 的元素。
+        // 否则会把音量按钮、工具栏按钮这类小控件也当成锚点。
         let is_edit = control_type == UIA_EditControlTypeId.0;
+        let has_text_pattern = focused
+            .GetCurrentPatternAs::<windows::Win32::UI::Accessibility::IUIAutomationTextPattern>(
+                windows::Win32::UI::Accessibility::UIA_TextPatternId,
+            )
+            .is_ok()
+            || focused
+                .GetCurrentPatternAs::<windows::Win32::UI::Accessibility::IUIAutomationTextPattern2>(
+                    windows::Win32::UI::Accessibility::UIA_TextPattern2Id,
+                )
+                .is_ok();
         let small_enough = ew * eh < ww * wh / 2;
-        if !is_edit && !small_enough {
+        if !is_edit && !(has_text_pattern && small_enough) {
             return None;
         }
         // 锚点放在元素右下角，配合「上方 -offset」的默认摆放，视觉上贴在输入框右端
