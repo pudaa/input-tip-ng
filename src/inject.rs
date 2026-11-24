@@ -78,8 +78,14 @@ fn shared() -> Option<*mut CaretShared> {
 fn dll_path() -> Option<std::path::PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    let p = dir.join("input-tip-hook.dll");
-    if p.exists() { Some(p) } else { None }
+    // cargo 输出的是 crate 名下划线命名；打包时也可能改名，两种都认
+    for name in ["input-tip-hook.dll", "input_tip_hook.dll"] {
+        let p = dir.join(name);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
 }
 
 unsafe fn module_base(process: HANDLE, name: &str) -> Option<usize> {
