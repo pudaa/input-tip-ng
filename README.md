@@ -70,6 +70,7 @@ input-tip-ng --version / --help
 1. input-tip-ng --check-autostart 看结构化状态（任务/注册表/健康度一次给全）。
 2. 看 %LOCALAPPDATA%\input-tip-ng\logs\autostart-*.log，每条修复都带原因。
 3. 仍不启动时，用「任务计划程序」打开 input-tip-ng 任务看「上次运行结果」；常见为杀软拦截 exe 首次运行（把 exe 加入白名单，或临时改用 Run 键方式）。
+4. 移动过 exe 位置时：任务仍指向旧路径，此时手工运行一次新位置的 exe，自检会把任务改指新路径。
 
 ## 目录结构
 
