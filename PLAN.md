@@ -101,6 +101,18 @@
   会锁住旧 DLL，Windows 不允许覆盖，升级只能换名并存。
 - 日志新增光标来源 src=（gti / inject / ia2 / uia / msaa / anchor），每 300ms 一条。
 
+第四轮（21:30 后，老大反馈：Typora/VSCode 牌子常驻窗口左上角、浏览器锚定在输入框右侧、
+Typora 崩过一次）：
+
+- 关键误会：老大跑的是 `target\release\input-tip-ng.exe` 的 21:02 旧构建，
+  上面两个症状恰好都是旧代码的已知问题（Chromium 的 (0,0) 假光标、UIA 零高度矩形被丢弃）。
+  已重建 release，并让 release/debug 都带 `src=` 来源日志。
+- 新增 `[symbol] follow` 三档：`caret` / `mouse` / `auto`（默认）。
+  mouse 模式固定摆在指针右下角（`mouse_offset_x/y`，按 DPI 缩放），复用现有 90ms ease-out 补间；
+  auto 模式只在「有真光标」时跟光标，锚点或取不到时退回鼠标，避免钉在输入框边缘。
+- 注入默认关闭（`[inject] enabled=false`）：Chromium 里 GetCaretPos 恒为 (0,0)，
+  会把牌子吸到窗口左上角，且对目标进程有崩溃风险；HOOK 代码与脏值过滤保留，待 UIA 路线定了再决定去留。
+
 待验证（需要前台应用配合）：
 
 - VSCode / Edge / Typora 聚焦输入时，四级来源里谁能稳定给出光标矩形；

@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HINSTANCE, HWND, LPARAM, LRESULT, RECT,
+    CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT,
     WPARAM,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -15,12 +15,12 @@ use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, FindWindowW,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, FindWindowW, GetCursorPos,
     GetForegroundWindow, GetMessageW, MSG, PostMessageW, PostQuitMessage, RegisterClassW, SetTimer,
     TranslateMessage, WM_CLOSE, WM_DESTROY, WM_TIMER, WNDCLASSW, WS_POPUP,
 };
 
-use crate::config::{AppConfig, SymbolTheme};
+use crate::config::{AppConfig, FollowMode, SymbolTheme};
 use crate::state::InputState;
 use crate::{caret, ime, log, process, symbol, tray};
 
@@ -168,17 +168,37 @@ fn tick() {
         return;
     }
 
-    let Some(caret_rect) = caret::rect() else {
-        hide(rt);
-        rt.last_state = None;
-        rt.last_caret = None;
-        // 用户在输入却拿不到光标：限流记一次诊断，方便事后定位是哪个程序不给
-        let now = Instant::now();
-        if rt.last_miss.map(|t| now.duration_since(t).as_secs() >= 5).unwrap_or(true) {
-            rt.last_miss = Some(now);
-            log::write("caret", "debug", &caret::diag().replace('\n', " | "));
+    // 跟随模式：caret=文本光标，mouse=鼠标右下角，auto=有真光标就跟光标、否则跟鼠标
+    let follow = rt.theme.follow;
+    let real_caret = if follow == FollowMode::Mouse { None } else { caret::rect() };
+    let real_source = if follow == FollowMode::Mouse { "none" } else { caret::source() };
+    let use_mouse = match follow {
+        FollowMode::Mouse => true,
+        FollowMode::Auto => !matches!(real_source, "gti" | "inject" | "uia" | "msaa"),
+        FollowMode::Caret => false,
+    };
+    let caret_rect = if use_mouse {
+        let mut pt = POINT::default();
+        if unsafe { GetCursorPos(&mut pt) }.is_err() {
+            hide(rt);
+            return;
         }
-        return;
+        // 用一个 1 像素高的「光标」代表指针，真正的右下角偏移在 show 之后精确摆放
+        RECT { left: pt.x, top: pt.y, right: pt.x, bottom: pt.y + 1 }
+    } else {
+        let Some(c) = real_caret else {
+            hide(rt);
+            rt.last_state = None;
+            rt.last_caret = None;
+            // 用户在输入却拿不到光标：限流记一次诊断，方便事后定位是哪个程序不给
+            let now = Instant::now();
+            if rt.last_miss.map(|t| now.duration_since(t).as_secs() >= 5).unwrap_or(true) {
+                rt.last_miss = Some(now);
+                log::write("caret", "debug", &caret::diag().replace('\n', " | "));
+            }
+            return;
+        };
+        c
     };
 
     let state = ime::detect(fg);
@@ -197,7 +217,7 @@ fn tick() {
                 caret_rect.top,
                 caret_rect.right - caret_rect.left,
                 caret_rect.bottom - caret_rect.top,
-                crate::caret::source()
+                if use_mouse { "mouse" } else { crate::caret::source() }
             ),
         );
     }
@@ -242,8 +262,17 @@ fn tick() {
                 if d == 0 { 1.25 } else { d as f32 / 96.0 }
             };
             let caret_h = (caret_rect.bottom - caret_rect.top).max(1);
-            let tx = caret_rect.right + (rt.theme.offset_x as f32 * scale).round() as i32;
-            let ty = caret_rect.top + (caret_h - h) / 2;
+            let (tx, ty) = if use_mouse {
+                (
+                    caret_rect.left + (rt.theme.mouse_offset_x as f32 * scale).round() as i32,
+                    caret_rect.top + (rt.theme.mouse_offset_y as f32 * scale).round() as i32,
+                )
+            } else {
+                (
+                    caret_rect.right + (rt.theme.offset_x as f32 * scale).round() as i32,
+                    caret_rect.top + (caret_h - h) / 2,
+                )
+            };
             if let Some((px, py)) = symbol::current_pos() {
                 if (px - tx).abs() + (py - ty).abs() > 1 {
                     rt.tween = Some((px, py, tx, ty, Instant::now()));
@@ -279,7 +308,13 @@ fn tick() {
             &caret_rect,
             if dpi == 0 { 96 } else { dpi },
         );
-        if let Some((x, y, w, h)) = shown {
+        if let Some((mut x, mut y, w, h)) = shown {
+            if use_mouse {
+                let scale = if dpi == 0 { 1.25 } else { dpi as f32 / 96.0 };
+                x = caret_rect.left + (rt.theme.mouse_offset_x as f32 * scale).round() as i32;
+                y = caret_rect.top + (rt.theme.mouse_offset_y as f32 * scale).round() as i32;
+                let _ = symbol::move_to(hwnd_of(rt), x, y);
+            }
             let from = symbol::current_pos();
             if let Some((px, py)) = from {
                 let (dx, dy) = ((x - px).abs(), (y - py).abs());
@@ -294,7 +329,7 @@ fn tick() {
                     "文字牌显示于 ({x},{y}) {w}x{h}，caret=({},{}) src={}",
                     caret_rect.left,
                     caret_rect.top,
-                    crate::caret::source()
+                    if use_mouse { "mouse" } else { crate::caret::source() }
                 ),
             );
         }

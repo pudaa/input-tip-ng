@@ -30,6 +30,10 @@ const DEFAULT_ENTRIES: &[(&str, &str, &str)] = &[
     ("symbol", "opacity", "90"),
     ("symbol", "offset_x", "8"),
     ("symbol", "offset_y", "-20"),
+    // caret = 跟随文本光标；mouse = 跟随鼠标右下角；auto = 有真光标跟光标、否则跟鼠标
+    ("symbol", "follow", "auto"),
+    ("symbol", "mouse_offset_x", "18"),
+    ("symbol", "mouse_offset_y", "18"),
     ("symbol", "hide_delay_ms", "2500"),
     ("symbol", "corner", "7"),
     ("symbol", "fg", "0xFFFFFF"),
@@ -162,6 +166,14 @@ fn parse_color(v: &str) -> Option<u32> {
     u32::from_str_radix(s, 16).ok()
 }
 
+/// 提示牌跟随谁：文本光标 / 鼠标右下角 / 有真光标跟光标、否则跟鼠标
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FollowMode {
+    Caret,
+    Mouse,
+    Auto,
+}
+
 #[derive(Debug, Clone)]
 pub struct SymbolTheme {
     pub enabled: bool,
@@ -171,6 +183,9 @@ pub struct SymbolTheme {
     pub opacity: u8,
     pub offset_x: i32,
     pub offset_y: i32,
+    pub follow: FollowMode,
+    pub mouse_offset_x: i32,
+    pub mouse_offset_y: i32,
     pub hide_delay_ms: u64,
     pub corner: f32,
     pub fg: u32,
@@ -261,6 +276,19 @@ impl AppConfig {
             opacity: num("opacity", 100.0).clamp(0.0, 100.0) as u8,
             offset_x: num("offset_x", 0.0) as i32,
             offset_y: num("offset_y", -20.0) as i32,
+            follow: match self
+                .ini
+                .get("symbol", "follow")
+                .map(|v| v.trim().to_ascii_lowercase())
+                .unwrap_or_default()
+                .as_str()
+            {
+                "mouse" => FollowMode::Mouse,
+                "caret" => FollowMode::Caret,
+                _ => FollowMode::Auto,
+            },
+            mouse_offset_x: num("mouse_offset_x", 18.0) as i32,
+            mouse_offset_y: num("mouse_offset_y", 18.0) as i32,
             hide_delay_ms: num("hide_delay_ms", 500.0).max(0.0) as u64,
             corner: num("corner", 6.0).max(0.0),
             fg: self

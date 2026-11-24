@@ -90,6 +90,20 @@ exes=chrome.exe,Code.exe
   `{seq, left, top, width, height}` 写进共享内存 `Local\input-tip-ng-caret`；
   `width = -1` 表示回调跑到了但目标当前没有光标。
 
+## 跟随模式
+
+提示牌跟随谁由 `[symbol] follow` 决定（按 DPI 缩放）：
+
+| 值 | 行为 |
+| --- | --- |
+| `caret` | 只跟文本光标；取不到就不显示 |
+| `mouse` | 跟随鼠标右下角，偏移由 `mouse_offset_x` / `mouse_offset_y` 控制（默认 18 / 18） |
+| `auto`（默认） | 拿到真实文本光标就跟光标；只有锚点（输入框边缘）或完全取不到时改跟鼠标 |
+
+浏览器与 Electron 应用（Chrome、Edge、Typora、VS Code）默认不打开无障碍树，
+UIA 常常只给文本范围不给包围盒；`auto` 在这些程序里会自动退回鼠标跟随，
+不会再把牌子钉在输入框右边或窗口左上角。鼠标跟随复用同一套 90ms ease-out 补间。
+
 ## 数据与日志
 
 - 配置：%LOCALAPPDATA%\input-tip-ng\config.ini（UTF-8，INI，可直接手改）
