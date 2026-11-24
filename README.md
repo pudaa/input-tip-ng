@@ -65,6 +65,28 @@ input-tip-ng --preview [CN|EN|CAPS|US|JP|KR]  在屏幕上预览一次文字牌
 input-tip-ng --version / --help
 ```
 
+## 注入式光标（可选，默认关闭）
+
+Chromium/Electron/Qt 不通过公开 API 暴露文本光标，公开的 UIA/MSAA 在这些程序里拿不到位置。
+可选方案：把 `input-tip-hook.dll` 注入目标进程，在它的 UI 线程里读 `GetCaretPos`
+（只读，不改目标任何状态），经共享内存回传。
+
+- 构建：`cargo build -p input-tip-hook --release`，把 `target/release/input_tip_hook.dll`
+  复制成 `input-tip-hook.dll` 放到主程序同目录
+- 开启：配置里
+
+```ini
+[inject]
+enabled=true
+exes=chrome.exe,Code.exe
+```
+
+- **注意**：未签名的 DLL 注入容易被杀软误报，且需要你信任目标进程。默认关闭，
+  只在明确列出的程序上启用；不列就完全不注入。
+- 通讯协议：宿主发私有消息 `0x8051`（wParam = 序号），DLL 的窗口子类化回调把
+  `{seq, left, top, width, height}` 写进共享内存 `Local\input-tip-ng-caret`；
+  `width = -1` 表示回调跑到了但目标当前没有光标。
+
 ## 数据与日志
 
 - 配置：%LOCALAPPDATA%\input-tip-ng\config.ini（UTF-8，INI，可直接手改）

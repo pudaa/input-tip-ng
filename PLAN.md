@@ -72,9 +72,21 @@
   1. 提示窗没置顶 —— IsWindowVisible=true、矩形正确，但被前台全屏窗口盖住，屏幕上完全看不到；
   2. Win11 记事本/终端等控件不给 GUITHREADINFO 的 caret 字段 —— 补 AttachThreadInput + GetCaretPos 兜底。
 
+注入式光标（2026-11-24 起）：
+
+- 新增 hook/（cdylib）：注入后在目标 UI 线程用 SetWindowLongPtr 子类化窗口，
+  收到私有消息时读 GetCaretPos 并写共享内存；只读不改状态。
+- 宿主 src/inject.rs：OpenProcess → 远程 LoadLibrary → 枚举目标模块取基址 →
+  远程调用 ITNGStart → 发消息 → 读共享内存。
+- 实测（Notepad）：DLL 加载成功、子类化成功、回调被调用（seq 回传、width=-1 表示
+  目标当时无光标），目标进程存活。
+- 修掉一个崩溃：GetExitCodeThread 只有 32 位，x64 模块基址被截断会跳到野地址。
+- 默认关闭（[inject] enabled=false）；未签名，存在杀软误报风险，只在列出的 exe 上启用。
+
 待办：
 
-- 在有真实 caret 的应用里逐个验证位置与命中率（需老大手工验证）。
+- 在有真实 caret 的应用（Chrome/Edge/VSCode/Typora）里实测注入路径的坐标与跟随。
+- 在真实 caret 的应用里逐个验证位置与命中率（需老大手工验证）。
 - 在老大常用应用里逐个验证：位置偏移、命中率、必须补的 per-app offset 覆盖表。
 
 原始计划：
