@@ -15,9 +15,11 @@ mod caret;
 mod config;
 mod ime;
 mod log;
+mod migrate;
 mod process;
 mod state;
 mod symbol;
+mod tray;
 
 use std::process::ExitCode;
 
@@ -37,6 +39,7 @@ input-tip-ng —— InputTip 的 Rust 重写版
   input-tip-ng --check-autostart     检查自启状态并自愈（退出码 0 表示健康）
   input-tip-ng --exit                通知正在运行的实例退出
   input-tip-ng --probe               打印前台窗口的进程/状态/caret 探测详情（排障用）
+  input-tip-ng --migrate <旧 config.ini>  从旧版配置迁移文字牌、白名单与运行参数
   input-tip-ng --preview [CN|EN|CAPS|US|JP|KR]  在屏幕上预览一次文字牌（校色/校字号用）
   input-tip-ng --version             显示版本
   input-tip-ng --help                显示本帮助
@@ -69,6 +72,7 @@ fn main() -> ExitCode {
         "--check-autostart" => with_com(cmd_check),
         "--exit" => cmd_exit(),
         "--probe" => cmd_probe(),
+        "--migrate" => cmd_migrate(args.get(1).map(String::as_str)),
         "--preview" => cmd_preview(args.get(1).map(String::as_str).unwrap_or("CN")),
         "" | "--autostart" => cmd_run(cmd == "--autostart"),
         other => {
@@ -261,6 +265,23 @@ fn cmd_preview(state_key: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+fn cmd_migrate(old: Option<&str>) -> ExitCode {
+    let Some(old) = old else {
+        eprintln!("用法: input-tip-ng --migrate <旧 config.ini 路径>");
+        return ExitCode::from(2);
+    };
+    match migrate::run(std::path::Path::new(old)) {
+        Ok(summary) => {
+            println!("迁移完成：\n{summary}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("迁移失败: {e}");
+            ExitCode::from(1)
+        }
+    }
+}
+
 fn cmd_probe() -> ExitCode {
     unsafe {
         let fg = windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow();
@@ -270,6 +291,7 @@ fn cmd_probe() -> ExitCode {
         println!("前台进程: {proc_name} (hwnd={}, dpi={})", fg.0 as isize, dpi);
         println!("探测原始值: {}", ime::probe(fg));
         println!("判定状态: {}", state.key());
+        println!("线程 UI 信息: {}", caret::probe());
         match caret::rect() {
             Some(c) => println!(
                 "caret: 屏幕坐标 ({}, {}) 尺寸 {}x{}",

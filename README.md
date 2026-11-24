@@ -59,6 +59,9 @@ input-tip-ng --install-autostart   注册开机自启（首选计划任务，失
 input-tip-ng --uninstall-autostart 移除全部自启项
 input-tip-ng --check-autostart     检查自启状态并自愈（退出码 0 表示健康）
 input-tip-ng --exit                通知正在运行的实例退出
+input-tip-ng --probe               打印前台进程/状态/caret 探测详情（排障用）
+input-tip-ng --migrate <旧配置>    从旧版 InputTip 的 config.ini 迁移文字牌/白名单/运行参数
+input-tip-ng --preview [CN|EN|CAPS|US|JP|KR]  在屏幕上预览一次文字牌
 input-tip-ng --version / --help
 ```
 

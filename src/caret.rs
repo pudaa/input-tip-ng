@@ -35,6 +35,30 @@ pub fn rect() -> Option<RECT> {
     }
 }
 
+/// 诊断：把 GUITHREADINFO 里与 caret 相关的字段原样抛出来，
+/// 用来区分「系统不给 caret」和「我们取错了线程」。
+pub fn probe() -> String {
+    unsafe {
+        let mut gti = GUITHREADINFO {
+            cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+            ..Default::default()
+        };
+        match GetGUIThreadInfo(0, &mut gti) {
+            Ok(()) => format!(
+                "flags=0x{:X} focus={} caret_hwnd={} rc=({}, {}) {}x{}",
+                gti.flags.0,
+                gti.hwndFocus.0 as isize,
+                gti.hwndCaret.0 as isize,
+                gti.rcCaret.left,
+                gti.rcCaret.top,
+                gti.rcCaret.right - gti.rcCaret.left,
+                gti.rcCaret.bottom - gti.rcCaret.top
+            ),
+            Err(e) => format!("GetGUIThreadInfo 失败: {e}"),
+        }
+    }
+}
+
 /// 方便日志：给一个窗口句柄取 caret 所属窗口（诊断用）
 pub fn owner() -> Option<HWND> {
     unsafe {

@@ -20,7 +20,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 use crate::config::{AppConfig, SymbolTheme};
 use crate::state::InputState;
-use crate::{caret, ime, log, process, symbol};
+use crate::{caret, ime, log, process, symbol, tray};
+
+/// TaskbarCreated：资源管理器重启后要重新把图标加回去
+static mut TASKBAR_CREATED: u32 = 0;
 
 const WINDOW_CLASS: &str = "InputTipNgResidentWindow";
 
@@ -30,6 +33,7 @@ struct Runtime {
     /// 每状态一份：(状态, 文字, 底色)
     styles: Vec<(InputState, String, u32)>,
     rules: Vec<String>,
+    paused: bool,
     last_state: Option<InputState>,
     last_caret: Option<RECT>,
     last_show: Option<Instant>,
@@ -73,7 +77,7 @@ fn tick() {
     };
     let Some(rt) = guard.as_mut() else { return };
 
-    if !rt.theme.enabled {
+    if !rt.theme.enabled || rt.paused {
         hide(rt);
         return;
     }
@@ -143,6 +147,53 @@ fn tick() {
     }
 }
 
+/// 处理托盘菜单
+fn handle_menu(hwnd: HWND) {
+    let paused = {
+        let guard = match RT.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        guard.as_ref().map(|rt| rt.paused).unwrap_or(false)
+    };
+
+    match tray::popup_menu(hwnd, paused) {
+        tray::MenuAction::TogglePause => {
+            let now_paused = {
+                let mut guard = match RT.lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
+                match guard.as_mut() {
+                    Some(rt) => {
+                        rt.paused = !rt.paused;
+                        rt.last_state = None;
+                        rt.last_caret = None;
+                        rt.last_show = None;
+                        rt.paused
+                    }
+                    None => false,
+                }
+            };
+            let tip = if now_paused { "input-tip-ng（已暂停）" } else { "input-tip-ng" };
+            let _ = tray::update_tip(hwnd, tip);
+            log::info("tray", &format!("提示已{}", if now_paused { "暂停" } else { "恢复" }));
+        }
+        tray::MenuAction::OpenConfig => {
+            let path = crate::log::root_dir().join("config.ini");
+            let _ = std::process::Command::new("notepad.exe").arg(path).spawn();
+        }
+        tray::MenuAction::OpenLogs => {
+            let dir = crate::log::log_dir();
+            let _ = std::process::Command::new("explorer.exe").arg(dir).spawn();
+        }
+        tray::MenuAction::Exit => {
+            let _ = unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) };
+        }
+        tray::MenuAction::None => {}
+    }
+}
+
 fn request_exit_impl() -> bool {
     let class = wide(WINDOW_CLASS);
     unsafe {
@@ -173,6 +224,20 @@ unsafe extern "system" fn wndproc(
     match msg {
         WM_TIMER => {
             tick();
+            LRESULT(0)
+        }
+        tray::WM_TRAY => {
+            // 经典回调格式：lParam 低位是鼠标消息
+            let mouse = (lparam.0 & 0xFFFF) as u32;
+            if mouse == 0x0205 || mouse == 0x0202 {
+                // WM_RBUTTONUP / WM_LBUTTONUP
+                handle_menu(hwnd);
+            }
+            LRESULT(0)
+        }
+        m if m != 0 && m == unsafe { TASKBAR_CREATED } => {
+            let ok = tray::add(hwnd, "input-tip-ng");
+            log::write("tray", if ok { "info" } else { "warn" }, "资源管理器重启，重新添加托盘图标");
             LRESULT(0)
         }
         WM_CLOSE => {
@@ -271,6 +336,10 @@ pub fn run(autostarted: bool) -> i32 {
             }
         };
 
+        TASKBAR_CREATED = windows::Win32::UI::WindowsAndMessaging::RegisterWindowMessageW(
+            windows::core::w!("TaskbarCreated"),
+        );
+
         let symbol_hwnd = symbol::create();
         if symbol_hwnd.0.is_null() {
             log::error("app", "创建文字牌窗口失败，状态提示将不可用");
@@ -286,11 +355,19 @@ pub fn run(autostarted: bool) -> i32 {
                 theme,
                 styles,
                 rules,
+                paused: false,
                 last_state: None,
                 last_caret: None,
                 last_show: None,
             });
         }
+
+        let tray_ok = tray::add(hwnd, "input-tip-ng");
+        log::write(
+            "tray",
+            if tray_ok { "info" } else { "warn" },
+            if tray_ok { "托盘图标已添加" } else { "托盘图标添加失败" },
+        );
 
         let _ = SetTimer(Some(hwnd), 1, poll_ms, None);
         log::info("app", "常驻进程已就绪");
@@ -301,6 +378,7 @@ pub fn run(autostarted: bool) -> i32 {
             DispatchMessageW(&msg);
         }
 
+        tray::remove(hwnd);
         log::info("app", "退出");
         let _ = CloseHandle(mutex);
     }

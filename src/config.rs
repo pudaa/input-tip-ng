@@ -103,6 +103,10 @@ impl Ini {
         out
     }
 
+    pub fn sections(&self) -> &[Section] {
+        &self.sections
+    }
+
     pub fn get(&self, section: &str, key: &str) -> Option<&str> {
         self.sections
             .iter()
