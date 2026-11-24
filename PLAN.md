@@ -57,6 +57,13 @@
 - --migrate：解析旧版 UTF-16 配置，迁移六状态文本/底色、字体字号字重透明度、偏移、隐藏延迟、22 条白名单、切换热键；迁移前自动备份 config.ini.bak。
 - --probe 增加 GUITHREADINFO 原始字段，用于区分「系统不给 caret」与「取错线程」。
 
+端到端实测（2026-11-24，用 Windows Computer Use 观察）：
+
+- 前台为 Windows Terminal、hide_delay 拉长后，文字牌出现在 caret 上方、置顶可见、颜色为配置的 EN 底色 #87CEFA（截图 docs/images/e2e-chip.png）。
+- 顺带查出并修掉两个只有在真机才暴露的 bug：
+  1. 提示窗没置顶 —— IsWindowVisible=true、矩形正确，但被前台全屏窗口盖住，屏幕上完全看不到；
+  2. Win11 记事本/终端等控件不给 GUITHREADINFO 的 caret 字段 —— 补 AttachThreadInput + GetCaretPos 兜底。
+
 待办：
 
 - 在有真实 caret 的应用里逐个验证位置与命中率（需老大手工验证）。

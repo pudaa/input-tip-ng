@@ -35,9 +35,10 @@ use windows::Win32::Graphics::Gdi::{
     HGDIOBJ, SelectObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW, SW_SHOWNOACTIVATE, ULW_ALPHA,
-    UpdateLayeredWindow, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
-    WS_POPUP, WNDCLASSW, WINDOW_EX_STYLE, WM_CLOSE,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, HWND_TOPMOST, RegisterClassW, SW_SHOWNOACTIVATE,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SetWindowPos, ULW_ALPHA,
+    UpdateLayeredWindow, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_EX_TRANSPARENT, WS_POPUP, WNDCLASSW, WINDOW_EX_STYLE, WM_CLOSE,
 };
 
 use windows::Win32::Foundation::HINSTANCE;
@@ -199,8 +200,14 @@ pub fn create() -> HWND {
             return HWND::default();
         }
         let title = wide("input-tip-ng symbol");
+        // 必须置顶：否则在前台窗口最大化/全屏时会被压在下面（Win32 的 IsWindowVisible 仍是 true，
+        // 但屏幕上看不到，非常难查）
         let ex = WINDOW_EX_STYLE(
-            WS_EX_LAYERED.0 | WS_EX_TRANSPARENT.0 | WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0,
+            WS_EX_LAYERED.0
+                | WS_EX_TRANSPARENT.0
+                | WS_EX_NOACTIVATE.0
+                | WS_EX_TOOLWINDOW.0
+                | WS_EX_TOPMOST.0,
         );
         let hwnd = CreateWindowExW(
             ex,
@@ -408,6 +415,17 @@ pub fn show(
             ) {
                 crate::log::error("symbol", &format!("UpdateLayeredWindow 失败: {e}"));
             }
+
+            // 每次显示都重新提到最前，避免被后来的置顶窗口盖住
+            let _ = SetWindowPos(
+                hwnd,
+                Some(HWND_TOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            );
 
             SelectObject(mem_dc, old);
             let _ = DeleteObject(HGDIOBJ(bitmap.0));

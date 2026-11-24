@@ -15,6 +15,10 @@
    （DWMWA_BORDER_COLOR=none、DWMWA_WINDOW_CORNER_PREFERENCE=DONOTROUND），否则屏幕边缘会出现一圈深色线。
 8b. **圆角与尺寸**：圆角半径不得超过高度的 1/4（小尺寸下否则变成胶囊/椭圆）；离屏位图四周各留 1 像素透明边，
    否则抗锯齿会被窗口边界裁成硬边。
+8c. **提示窗必须置顶**：WS_EX_TOPMOST + 每次显示 SetWindowPos(HWND_TOPMOST)。缺少置顶时 IsWindowVisible 仍为 true、
+   窗口矩形也正确，但会被前台全屏窗口盖住——屏幕上看不见，极难排查。
+8d. **caret 要两级取法**：GetGUIThreadInfo 优先；失败时 AttachThreadInput + GetCaretPos（Win11 记事本等控件
+   不给 GUITHREADINFO 的 caret 字段）。
 9. **界面不写控件背后的说明**：不用「例如……」「勾选后……」这类旁注，靠标题、控件类型、色彩引导。
 10. **主题色与图标同源**：一种状态一种颜色，图标、提示牌、设置界面同色值，禁止风格混搭。
 11. **中文注释、中文文档**：面向单人维护。

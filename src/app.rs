@@ -28,12 +28,18 @@ static mut TASKBAR_CREATED: u32 = 0;
 const WINDOW_CLASS: &str = "InputTipNgResidentWindow";
 
 struct Runtime {
+    window: isize,
     symbol: isize,
     theme: SymbolTheme,
     /// 每状态一份：(状态, 文字, 底色)
     styles: Vec<(InputState, String, u32)>,
     rules: Vec<String>,
     paused: bool,
+    /// 上一次的前台窗口与进程名缓存：进程名只在窗口切换时查一次（每拍都 OpenProcess 太浪费）
+    last_fg: isize,
+    last_proc: String,
+    /// 托盘提示里显示的状态名，避免每拍都 Shell_NotifyIcon
+    last_tip_state: &'static str,
     last_state: Option<InputState>,
     last_caret: Option<RECT>,
     last_show: Option<Instant>,
@@ -88,7 +94,11 @@ fn tick() {
         return;
     }
 
-    let proc_name = process::name(fg).unwrap_or_default();
+    if rt.last_fg != fg.0 as isize {
+        rt.last_fg = fg.0 as isize;
+        rt.last_proc = process::name(fg).unwrap_or_default();
+    }
+    let proc_name = rt.last_proc.clone();
     let allowed =
         rt.rules.is_empty() || rt.rules.iter().any(|r| r.eq_ignore_ascii_case(&proc_name));
     if !allowed {
@@ -139,6 +149,14 @@ fn tick() {
         rt.last_state = Some(state);
         rt.last_caret = Some(caret_rect);
         rt.last_show = Some(now);
+
+        // 托盘提示跟着状态走，只有状态变化时才调用 Shell_NotifyIcon
+        if rt.last_tip_state != state.key() {
+            rt.last_tip_state = state.key();
+            let tip = format!("input-tip-ng · {}", state.key());
+            let main = HWND(rt.window as *mut core::ffi::c_void);
+            let _ = tray::update_tip(main, &tip);
+        }
     } else if let Some(shown_at) = rt.last_show {
         if now.duration_since(shown_at).as_millis() as u64 >= rt.theme.hide_delay_ms {
             symbol::hide(hwnd_of(rt));
@@ -351,11 +369,15 @@ pub fn run(autostarted: bool) -> i32 {
                 Err(p) => p.into_inner(),
             };
             *guard = Some(Runtime {
+                window: hwnd.0 as isize,
                 symbol: symbol_hwnd.0 as isize,
                 theme,
                 styles,
                 rules,
                 paused: false,
+                last_fg: 0,
+                last_proc: String::new(),
+                last_tip_state: "",
                 last_state: None,
                 last_caret: None,
                 last_show: None,
