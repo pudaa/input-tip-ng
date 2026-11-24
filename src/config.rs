@@ -29,7 +29,7 @@ const DEFAULT_ENTRIES: &[(&str, &str, &str)] = &[
     ("symbol", "offset_x", "0"),
     ("symbol", "offset_y", "-20"),
     ("symbol", "hide_delay_ms", "500"),
-    ("symbol", "corner", "6"),
+    ("symbol", "corner", "4"),
     ("symbol", "fg", "0xFFFFFF"),
     ("symbol", "text.CN", "漢"),
     ("symbol", "text.EN", "En"),

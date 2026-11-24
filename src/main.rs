@@ -235,7 +235,7 @@ fn cmd_preview(state_key: &str) -> ExitCode {
             std::env::temp_dir().join("itng-preview.bmp"),
         );
     }
-    symbol::show(
+    let rect = symbol::show(
         hwnd,
         &text,
         bg,
@@ -249,6 +249,13 @@ fn cmd_preview(state_key: &str) -> ExitCode {
         &caret,
         dpi,
     );
+
+    if let Ok(rect_path) = std::env::var("ITNG_PREVIEW_RECT") {
+        // 窗口句柄的坐标会被 DPI 虚拟化，这里直接把渲染时的物理坐标交给外部截图脚本
+        if let Some((x, y, w, h)) = rect {
+            let _ = std::fs::write(rect_path, format!("{x} {y} {w} {h}"));
+        }
+    }
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
     let mut msg = MSG::default();

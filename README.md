@@ -6,7 +6,7 @@ InputTip 的 Rust 重写版。沿用「读当前输入法状态 → 在光标旁
 
 ## 外观预览
 
-文字牌的真实渲染结果（24×20 像素，下图放大 6 倍便于看清边缘与字形）：
+文字牌的真实渲染结果（125% 缩放下 35×31 物理像素，下图放大 8 倍便于看清边缘与字形）：
 
 ![CN](docs/images/chip-cn.png) ![EN](docs/images/chip-en.png) ![CAPS](docs/images/chip-caps.png)
 
