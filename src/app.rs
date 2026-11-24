@@ -17,7 +17,7 @@ use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, FindWindowW,
     GetForegroundWindow, GetMessageW, MSG, PostMessageW, PostQuitMessage, RegisterClassW, SetTimer,
-    TranslateMessage, WINDOW_EX_STYLE, WM_CLOSE, WM_DESTROY, WM_TIMER, WNDCLASSW, WS_POPUP,
+    TranslateMessage, WM_CLOSE, WM_DESTROY, WM_TIMER, WNDCLASSW, WS_POPUP,
 };
 
 use crate::config::{AppConfig, SymbolTheme};
