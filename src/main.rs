@@ -73,7 +73,7 @@ fn main() -> ExitCode {
         "--uninstall-autostart" => with_com(cmd_uninstall),
         "--check-autostart" => with_com(cmd_check),
         "--exit" => cmd_exit(),
-        "--probe" => cmd_probe(),
+        "--probe" => with_com(cmd_probe),
         "--migrate" => cmd_migrate(args.get(1).map(String::as_str)),
         "--gen-icon" => cmd_gen_icon(args.get(1).map(String::as_str)),
         "--preview" => cmd_preview(args.get(1).map(String::as_str).unwrap_or("CN")),
@@ -319,6 +319,7 @@ fn cmd_probe() -> ExitCode {
         println!("探测原始值: {}", ime::probe(fg));
         println!("判定状态: {}", state.key());
         println!("线程 UI 信息: {}", caret::probe());
+        println!("UIA 详情: {}", caret::uia_probe());
         match caret::rect() {
             Some(c) => println!(
                 "caret: 屏幕坐标 ({}, {}) 尺寸 {}x{}",

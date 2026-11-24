@@ -355,8 +355,10 @@ pub fn show(
             // 尺寸先按 DIP 估，再取整到设备像素，最后用像素反推回 DIP —— 保证直边落在整像素
             let w_dip_est = ink_w + PAD_X_DIP * 2.0;
             let h_dip_est = (ink_h + PAD_Y_DIP * 2.0).max(size_dip * 1.2);
-            let w_px = (w_dip_est * scale).round().max(8.0) as i32;
-            let h_px = (h_dip_est * scale).round().max(8.0) as i32;
+            // 统一成正方形：边长取宽高较大者，文字再双向居中（之前是宽>高的扁矩形）
+            let side_px = ((w_dip_est.max(h_dip_est)) * scale).round().max(10.0) as i32;
+            let w_px = side_px;
+            let h_px = side_px;
             let w_dip = w_px as f32 / scale;
             let h_dip = h_px as f32 / scale;
 
@@ -438,11 +440,14 @@ pub fn show(
             }
 
             if let Ok(brush) = rt.CreateSolidColorBrush(&color(fg, 1.0), None) {
+                // 墨迹盒在正方形里双向居中
+                let text_left = (w_dip - ink_w) / 2.0 - ink_left;
+                let text_top = (h_dip - ink_h) / 2.0 - ink_top;
                 let text_rect = D2D_RECT_F {
-                    left: PAD_X_DIP - ink_left,
-                    top: PAD_Y_DIP - ink_top,
-                    right: PAD_X_DIP - ink_left + ink_w + 8.0,
-                    bottom: PAD_Y_DIP - ink_top + ink_h + 8.0,
+                    left: text_left,
+                    top: text_top,
+                    right: text_left + ink_w + 8.0,
+                    bottom: text_top + ink_h + 8.0,
                 };
                 rt.DrawText(
                     &body,

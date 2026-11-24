@@ -33,7 +33,8 @@ struct Runtime {
     theme: SymbolTheme,
     /// 每状态一份：(状态, 文字, 底色)
     styles: Vec<(InputState, String, u32)>,
-    rules: Vec<String>,
+    hide_rules: Vec<String>,
+    show_rules: Vec<String>,
     paused: bool,
     /// 上一次的前台窗口与进程名缓存：进程名只在窗口切换时查一次（每拍都 OpenProcess 太浪费）
     last_fg: isize,
@@ -103,8 +104,14 @@ fn tick() {
         rt.last_proc = process::name(fg).unwrap_or_default();
     }
     let proc_name = rt.last_proc.clone();
-    let allowed =
-        rt.rules.is_empty() || rt.rules.iter().any(|r| r.eq_ignore_ascii_case(&proc_name));
+    // 黑名单优先；没有黑名单时看旧的白名单；两者都空 = 全部显示
+    let allowed = if !rt.hide_rules.is_empty() {
+        !rt.hide_rules.iter().any(|r| r.eq_ignore_ascii_case(&proc_name))
+    } else if !rt.show_rules.is_empty() {
+        rt.show_rules.iter().any(|r| r.eq_ignore_ascii_case(&proc_name))
+    } else {
+        true
+    };
     if !allowed {
         hide(rt);
         rt.last_state = None;
@@ -297,16 +304,18 @@ pub fn run(autostarted: bool) -> i32 {
         .iter()
         .map(|s| (*s, cfg.symbol_text(*s), cfg.symbol_bg(*s)))
         .collect();
-    let rules = cfg.rules_show();
+    let hide_rules = cfg.rules_hide();
+    let show_rules = cfg.rules_show();
     let poll_ms = cfg.poll_interval_ms();
 
     log::info(
         "app",
         &format!(
-            "启动 input-tip-ng v{}（{}），白名单 {} 个进程，轮询 {}ms",
+            "启动 input-tip-ng v{}（{}），黑名单 {} 个 / 白名单 {} 个进程，轮询 {}ms",
             env!("CARGO_PKG_VERSION"),
             if autostarted { "自启" } else { "手工" },
-            rules.len(),
+            hide_rules.len(),
+            show_rules.len(),
             poll_ms
         ),
     );
@@ -388,7 +397,8 @@ pub fn run(autostarted: bool) -> i32 {
                 symbol: symbol_hwnd.0 as isize,
                 theme,
                 styles,
-                rules,
+                hide_rules,
+                show_rules,
                 paused: false,
                 last_fg: 0,
                 last_proc: String::new(),

@@ -43,11 +43,10 @@ const DEFAULT_ENTRIES: &[(&str, &str, &str)] = &[
     ("symbol", "bg.US", "0x0000FF"),
     ("symbol", "bg.JP", "0xCCCC00"),
     ("symbol", "bg.KR", "0x800080"),
-    (
-        "rules",
-        "show",
-        "Code.exe,Typora.exe,DingTalk.exe,QQ.exe,Weixin.exe,msedge.exe,POWERPNT.EXE,WINWORD.EXE,EXCEL.EXE,ONENOTE.EXE,wps.exe,chrome.exe,explorer.exe,Files.exe,bongo-cat.exe,GitMind.exe,project-graph.exe,fdm.exe,Unity Hub.exe,Animate.exe,Illustrator.exe,Plain Craft Launcher 2.exe",
-    ),
+    // 默认黑名单模式：绝大多数程序都显示，只有列进来的不显示（旧版的白名单换成 hide）
+    ("rules", "hide", ""),
+    // 兼容旧配置：show 非空时按白名单处理
+    ("rules", "show", ""),
 ];
 
 #[derive(Debug, Clone, Default)]
@@ -274,7 +273,20 @@ impl AppConfig {
             .unwrap_or(0x808080)
     }
 
-    /// 白名单：空表示所有进程都显示
+    /// 黑名单：列进来的进程不显示
+    pub fn rules_hide(&self) -> Vec<String> {
+        self.ini
+            .get("rules", "hide")
+            .map(|v| {
+                v.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// 白名单（兼容旧配置）：非空时只有列出的进程显示
     pub fn rules_show(&self) -> Vec<String> {
         self.ini
             .get("rules", "show")
