@@ -68,9 +68,10 @@ fn same_rect(a: &RECT, b: &RECT) -> bool {
     a.left == b.left && a.top == b.top && a.right == b.right && a.bottom == b.bottom
 }
 
+/// 请求淡出：动画结束后由 symbol 内部真正隐藏
 fn hide(rt: &mut Runtime) {
     if rt.last_show.is_some() {
-        symbol::hide(hwnd_of(rt));
+        let _ = symbol::begin_hide(hwnd_of(rt));
     }
     rt.last_show = None;
 }
@@ -82,6 +83,9 @@ fn tick() {
         Err(p) => p.into_inner(),
     };
     let Some(rt) = guard.as_mut() else { return };
+
+    // 先推进淡入淡出；没有动画时几乎零开销
+    let _ = symbol::tick_animation(hwnd_of(rt));
 
     if !rt.theme.enabled || rt.paused {
         hide(rt);
@@ -132,7 +136,7 @@ fn tick() {
             .unwrap_or_else(|| (state.key().to_string(), 0x808080));
 
         let dpi = unsafe { windows::Win32::UI::HiDpi::GetDpiForWindow(fg) };
-        symbol::show(
+        let shown = symbol::show(
             hwnd_of(rt),
             &text,
             bg,
@@ -146,6 +150,13 @@ fn tick() {
             &caret_rect,
             if dpi == 0 { 96 } else { dpi },
         );
+        if let Some((x, y, w, h)) = shown {
+            log::write(
+                "app",
+                "debug",
+                &format!("文字牌显示于 ({x},{y}) {w}x{h}，caret=({},{})", caret_rect.left, caret_rect.top),
+            );
+        }
         rt.last_state = Some(state);
         rt.last_caret = Some(caret_rect);
         rt.last_show = Some(now);
@@ -159,7 +170,7 @@ fn tick() {
         }
     } else if let Some(shown_at) = rt.last_show {
         if now.duration_since(shown_at).as_millis() as u64 >= rt.theme.hide_delay_ms {
-            symbol::hide(hwnd_of(rt));
+            let _ = symbol::begin_hide(hwnd_of(rt));
             rt.last_show = None;
         }
     }
@@ -175,7 +186,10 @@ fn handle_menu(hwnd: HWND) {
         guard.as_ref().map(|rt| rt.paused).unwrap_or(false)
     };
 
-    match tray::popup_menu(hwnd, paused) {
+    log::write("tray", "debug", "打开托盘菜单");
+    let action = tray::popup_menu(hwnd, paused);
+    log::write("tray", "debug", "托盘菜单已关闭");
+    match action {
         tray::MenuAction::TogglePause => {
             let now_paused = {
                 let mut guard = match RT.lock() {
@@ -247,7 +261,8 @@ unsafe extern "system" fn wndproc(
         tray::WM_TRAY => {
             // 经典回调格式：lParam 低位是鼠标消息
             let mouse = (lparam.0 & 0xFFFF) as u32;
-            if mouse == 0x0205 || mouse == 0x0202 {
+            log::write("tray", "debug", &format!("收到托盘回调 mouse=0x{mouse:04X}"));
+            if mouse == 0x0205 || mouse == 0x0202 || mouse == 0x0203 || mouse == 0x0204 {
                 // WM_RBUTTONUP / WM_LBUTTONUP
                 handle_menu(hwnd);
             }

@@ -3,10 +3,10 @@
 //! 用 Shell_NotifyIcon 而不是自绘窗口：任务栏溢出区、DPI 缩放、深浅色主题都由系统处理。
 //! 左键/右键都弹菜单（旧版左键直接切暂停，容易误触，这里统一成菜单）。
 
-use windows::core::PCWSTR;
+use windows::core::{GUID, PCWSTR};
 use windows::Win32::Foundation::{HWND, POINT};
 use windows::Win32::UI::Shell::{
-    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
+    NIF_GUID, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
     Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -18,6 +18,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 pub const WM_TRAY: u32 = WM_APP + 1;
 
 const TRAY_ID: u32 = 1;
+
+/// 固定 GUID：程序重启（甚至异常退出留下"幽灵图标"）时，Shell 会用同 GUID 的新图标替换旧图标，
+/// 不会在托盘里堆积一排点了没反应的死图标。
+const TRAY_GUID: GUID = GUID::from_u128(0x9F1C2D3A_5B4E_4C7D_8A90_1B2C3D4E5F60);
 
 pub enum MenuAction {
     TogglePause,
@@ -32,6 +36,10 @@ fn wide(s: &str) -> Vec<u16> {
 }
 
 fn icon() -> windows::Win32::UI::WindowsAndMessaging::HICON {
+    // 优先用内嵌的应用图标（32px，任务栏通知区常见尺寸）；失败再退到系统默认图标
+    if let Some(icon) = crate::icon::load(32) {
+        return icon;
+    }
     unsafe { LoadIconW(None, IDI_APPLICATION).unwrap_or_default() }
 }
 
@@ -40,9 +48,10 @@ fn make_data(hwnd: HWND, tip: &str) -> NOTIFYICONDATAW {
         cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
         hWnd: hwnd,
         uID: TRAY_ID,
-        uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP,
+        uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_GUID,
         uCallbackMessage: WM_TRAY,
         hIcon: icon(),
+        guidItem: TRAY_GUID,
         ..Default::default()
     };
     let tip16 = wide(tip);

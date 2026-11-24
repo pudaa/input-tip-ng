@@ -13,6 +13,7 @@ mod app;
 mod autostart;
 mod caret;
 mod config;
+mod icon;
 mod ime;
 mod log;
 mod migrate;
@@ -40,6 +41,7 @@ input-tip-ng —— InputTip 的 Rust 重写版
   input-tip-ng --exit                通知正在运行的实例退出
   input-tip-ng --probe               打印前台窗口的进程/状态/caret 探测详情（排障用）
   input-tip-ng --migrate <旧 config.ini>  从旧版配置迁移文字牌、白名单与运行参数
+  input-tip-ng --gen-icon <输出 ico>  生成多尺寸应用图标（16~256）
   input-tip-ng --preview [CN|EN|CAPS|US|JP|KR]  在屏幕上预览一次文字牌（校色/校字号用）
   input-tip-ng --version             显示版本
   input-tip-ng --help                显示本帮助
@@ -73,6 +75,7 @@ fn main() -> ExitCode {
         "--exit" => cmd_exit(),
         "--probe" => cmd_probe(),
         "--migrate" => cmd_migrate(args.get(1).map(String::as_str)),
+        "--gen-icon" => cmd_gen_icon(args.get(1).map(String::as_str)),
         "--preview" => cmd_preview(args.get(1).map(String::as_str).unwrap_or("CN")),
         "" | "--autostart" => cmd_run(cmd == "--autostart"),
         other => {
@@ -270,6 +273,23 @@ fn cmd_preview(state_key: &str) -> ExitCode {
     }
     println!("预览结束（状态 {}，文字 {}，底色 0x{:06X}）", state.key(), text, bg);
     ExitCode::SUCCESS
+}
+
+fn cmd_gen_icon(out: Option<&str>) -> ExitCode {
+    let Some(out) = out else {
+        eprintln!("用法: input-tip-ng --gen-icon <输出 .ico 路径>");
+        return ExitCode::from(2);
+    };
+    match icon::generate_ico(std::path::Path::new(out)) {
+        Ok(()) => {
+            println!("已生成多尺寸图标: {out}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("生成图标失败: {e}");
+            ExitCode::from(1)
+        }
+    }
 }
 
 fn cmd_migrate(old: Option<&str>) -> ExitCode {
