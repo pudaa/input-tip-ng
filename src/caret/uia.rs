@@ -89,6 +89,10 @@ fn focused_element() -> Option<IUIAutomationElement> {
 }
 
 /// 从一个文本区间得到光标位置：先按字符展开，失败再按行展开取行右端。
+///
+/// Chromium 的折叠区间经常给出「x/y 有效、高度为 0」的包围盒，
+/// 旧版 InputTip 直接接受这种矩形，我们之前因为 h <= 0 把整条路径丢掉了——
+/// 浏览器/Electron 里 UIA 明明可用却拿不到光标，就是这里。
 fn rect_from_range(range: &IUIAutomationTextRange) -> Option<RECT> {
     unsafe {
         let _ = range.ExpandToEnclosingUnit(TextUnit_Character);
@@ -101,6 +105,17 @@ fn rect_from_range(range: &IUIAutomationTextRange) -> Option<RECT> {
                     bottom: (y + h) as i32,
                 });
             }
+            // 高度为 0：横向坐标通常是对的，高度改用行高补
+            let caret_x = x;
+            let _ = range.ExpandToEnclosingUnit(TextUnit_Line);
+            let height = range_rect(range).map(|(_, _, _, lh)| lh).filter(|lh| *lh > 0.0);
+            let h = height.unwrap_or(18.0);
+            return Some(RECT {
+                left: caret_x as i32,
+                top: y as i32,
+                right: caret_x as i32 + 2,
+                bottom: (y + h) as i32,
+            });
         }
         let _ = range.ExpandToEnclosingUnit(TextUnit_Line);
         if let Some((x, y, w, h)) = range_rect(range) {
@@ -143,10 +158,8 @@ pub fn caret() -> Option<RECT> {
                 if let Ok(len) = ranges.Length() {
                     for i in (0..len).rev() {
                         if let Ok(r) = ranges.GetElement(i) {
-                            // 先按原样取（Chromium 折叠后反而没有包围盒），不行再折叠
-                            if let Some(rect) = rect_from_range(&r) {
-                                return Some(rect);
-                            }
+                            // 先折叠成光标再按字符展开：Chromium/Electron 里选区可能跨字符，
+                            // 不折叠会把「选区首字符」当光标（旧版顺序就是先折叠）
                             let _ = r.MoveEndpointByRange(
                                 TextPatternRangeEndpoint_Start,
                                 &r,
@@ -267,7 +280,14 @@ pub fn caret_trace() -> String {
                         if len > 0 {
                             if let Ok(r) = ranges.GetElement(len - 1) {
                                 let _ = r.ExpandToEnclosingUnit(TextUnit_Character);
-                                log.push_str(&format!("选区 char rect={:?}; ", r.GetBoundingRectangles().ok().map(|sa| !sa.is_null())));
+                                let raw = r.GetBoundingRectangles().ok();
+                                if let Some(sa) = raw {
+                                    let n = unsafe { if sa.is_null() { -1 } else { SafeArrayGetUBound(sa, 0).unwrap_or(-1) } };
+                                    let parsed = first_rect(sa);
+                                    log.push_str(&format!("选区 char rect={{ubound={n}, rect={parsed:?}}}; "));
+                                } else {
+                                    log.push_str("选区 char rect=无; ");
+                                }
                             }
                         }
                     }

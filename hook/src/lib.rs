@@ -15,6 +15,10 @@ use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::System::Memory::{
     CreateFileMappingW, FILE_MAP_ALL_ACCESS, MapViewOfFile, OpenFileMappingW, PAGE_READWRITE,
 };
+use windows::Win32::UI::Input::Ime::{
+    COMPOSITIONFORM, GCS_COMPSTR, ImmGetCompositionStringW, ImmGetCompositionWindow,
+    ImmGetContext, ImmReleaseContext,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::GetFocus;
 use windows::Win32::UI::WindowsAndMessaging::{
     CallWindowProcW, GetCaretPos, GetGUIThreadInfo, GUITHREADINFO, GWLP_WNDPROC, SetWindowLongPtrW,
@@ -76,6 +80,40 @@ fn shared() -> Option<&'static mut CaretShared> {
     }
 }
 
+/// 中文组合输入期间，Chromium/Qt 的渲染光标没有 Win32 光标可读，
+/// 但输入法上下文里的 COMPOSITIONFORM.ptCurrentPos 就是「正在组字的那个点」。
+/// 这个接口是线程私有的，必须在本进程的 UI 线程里调——正是注入之后的位置。
+unsafe fn ime_composition_caret() -> Option<(i32, i32, i32)> {
+    unsafe {
+        let fg = windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow();
+        if fg.0.is_null() {
+            return None;
+        }
+        let tid = windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(fg, None);
+        if tid != windows::Win32::System::Threading::GetCurrentThreadId() {
+            return None;
+        }
+        let himc = ImmGetContext(fg);
+        if himc.0.is_null() {
+            return None;
+        }
+        // 只有正在组字（有临时组合串）才采信这个位置，否则它是上一次的陈旧值
+        let len = ImmGetCompositionStringW(himc, GCS_COMPSTR, None, 0);
+        let mut out = None;
+        if len > 0 {
+            let mut cf = COMPOSITIONFORM::default();
+            if ImmGetCompositionWindow(himc, &mut cf).as_bool() {
+                let mut pt = cf.ptCurrentPos;
+                if ClientToScreen(fg, &mut pt).as_bool() {
+                    out = Some((pt.x, pt.y, 20));
+                }
+            }
+        }
+        let _ = ImmReleaseContext(fg, himc);
+        out
+    }
+}
+
 /// 在当前线程里取光标屏幕坐标（本函数运行在目标 UI 线程，GetCaretPos 才有意义）。
 ///
 /// 先问 GetGUIThreadInfo：它给 hwndCaret + 客户区矩形，不依赖 GetFocus
@@ -95,7 +133,10 @@ unsafe fn caret_screen() -> Option<(i32, i32, i32)> {
             && !gti.hwndCaret.0.is_null()
         {
             let mut pt = POINT { x: gti.rcCaret.left, y: gti.rcCaret.top };
-            if ClientToScreen(gti.hwndCaret, &mut pt).as_bool() {
+            // (0,0) 且没有高度：多数是「有 caret 窗口但没有真光标」的脏值，
+            // 直接当光标会把提示牌吸到窗口左上角
+            let empty = gti.rcCaret.left == 0 && gti.rcCaret.top == 0 && gti.rcCaret.bottom == 0;
+            if !empty && ClientToScreen(gti.hwndCaret, &mut pt).as_bool() {
                 let height = (gti.rcCaret.bottom - gti.rcCaret.top).max(8);
                 return Some((pt.x, pt.y, height));
             }
@@ -119,7 +160,8 @@ unsafe fn caret_screen() -> Option<(i32, i32, i32)> {
             }
         }
         let mut pt = POINT::default();
-        if GetCaretPos(&mut pt).is_ok() {
+        if GetCaretPos(&mut pt).is_ok() && (pt.x != 0 || pt.y != 0) {
+            // Chromium 的 UI 线程上 GetCaretPos 会「成功」返回 (0,0)，那不是光标
             let focus = GetFocus();
             if !focus.0.is_null() {
                 let mut screen = pt;
@@ -128,7 +170,8 @@ unsafe fn caret_screen() -> Option<(i32, i32, i32)> {
                 }
             }
         }
-        None
+        // 最后才用输入法组合窗口：它是「组字点」的近似，不是真光标
+        ime_composition_caret()
     }
 }
 

@@ -72,10 +72,11 @@ fn heavy_cached() -> Option<(RECT, &'static str)> {
                 return *value;
             }
         }
-        // 顺序有讲究：IA2 是浏览器/Electron/Qt 唯一可靠的矩形来源，先问它
-        let fresh = ia2::caret()
-            .map(|r| (r, "ia2"))
-            .or_else(|| uia::caret().map(|r| (r, "uia")))
+        // 顺序有讲究：实测 Chromium/Electron/Qt 的跨进程 IAccessibleText QI 一律
+        // E_NOINTERFACE（浏览器只对 UIA3 暴露完整 TextPattern），所以 IA2 不再是主路径，
+        // 只保留 --ia2-test 诊断；这里先问 UIA，再退 MSAA。
+        let fresh = uia::caret()
+            .map(|r| (r, "uia"))
             .or_else(|| msaa::caret().map(|r| (r, "msaa")));
         *slot.borrow_mut() = Some((Instant::now(), fresh));
         fresh
