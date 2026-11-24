@@ -461,6 +461,17 @@ pub fn run(autostarted: bool) -> i32 {
             windows::core::w!("TaskbarCreated"),
         );
 
+        // 常驻进程也要初始化 COM：UIA 的 CoCreateInstance 在没有 COM 单元的线程上会失败
+        let hr = windows::Win32::System::Com::CoInitializeEx(
+            None,
+            windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
+        );
+        log::write(
+            "app",
+            if hr.is_ok() { "info" } else { "warn" },
+            &format!("COM 初始化: {hr:?}"),
+        );
+
         // 注册 UIA 焦点事件处理器：Chromium 检测到 UIA 客户端后才会打开无障碍树，
         // 否则 Chrome/Edge/Typora 的 TextPattern 永远不可用（拿不到光标）。
         let wired = caret::ensure_event_handler();
