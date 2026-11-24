@@ -168,11 +168,33 @@ fn tick() {
     };
 
     let state = ime::detect(fg);
-    let changed = rt.last_state != Some(state)
-        || match &rt.last_caret {
-            Some(prev) => !same_rect(prev, &caret_rect),
-            None => true,
-        };
+    let state_changed = rt.last_state != Some(state);
+    let moved = match &rt.last_caret {
+        Some(prev) => !same_rect(prev, &caret_rect),
+        None => true,
+    };
+    let changed = state_changed || moved;
+
+    // 状态没变、只是光标移动：不重新排版也不重新淡入，直接把已有的牌子补间平移过去
+    if !state_changed && moved && rt.last_show.is_some() {
+        if let Some((_w, h)) = symbol::current_size() {
+            let scale = unsafe {
+                let d = windows::Win32::UI::HiDpi::GetDpiForWindow(fg);
+                if d == 0 { 1.25 } else { d as f32 / 96.0 }
+            };
+            let caret_h = (caret_rect.bottom - caret_rect.top).max(1);
+            let tx = caret_rect.right + (rt.theme.offset_x as f32 * scale).round() as i32;
+            let ty = caret_rect.top + (caret_h - h) / 2;
+            if let Some((px, py)) = symbol::current_pos() {
+                if (px - tx).abs() + (py - ty).abs() > 1 {
+                    rt.tween = Some((px, py, tx, ty, Instant::now()));
+                }
+            }
+            rt.last_caret = Some(caret_rect);
+            rt.last_show = Some(Instant::now());
+            return;
+        }
+    }
 
     let now = Instant::now();
     if changed {
@@ -405,15 +427,16 @@ pub fn run(autostarted: bool) -> i32 {
             return 1;
         }
 
+        // TOOLWINDOW：这块 1x1 的窗口只是给托盘菜单当「前台窗口」用，不进 Alt+Tab
         let hwnd = match CreateWindowExW(
-            WINDOW_EX_STYLE(0),
+            windows::Win32::UI::WindowsAndMessaging::WS_EX_TOOLWINDOW,
             windows::core::PCWSTR::from_raw(class.as_ptr()),
             windows::core::PCWSTR::from_raw(title.as_ptr()),
             WS_POPUP,
-            0,
-            0,
-            0,
-            0,
+            -10000,
+            -10000,
+            1,
+            1,
             None,
             None,
             Some(HINSTANCE(instance.0)),
@@ -458,6 +481,12 @@ pub fn run(autostarted: bool) -> i32 {
                 tween: None,
             });
         }
+
+        // 让窗口真实「可见」（屏幕外 1x1），否则它不是前台窗口，托盘菜单会被系统立刻收掉
+        let _ = windows::Win32::UI::WindowsAndMessaging::ShowWindow(
+            hwnd,
+            windows::Win32::UI::WindowsAndMessaging::SW_SHOWNOACTIVATE,
+        );
 
         let tray_ok = tray::add(hwnd, "input-tip-ng");
         log::write(

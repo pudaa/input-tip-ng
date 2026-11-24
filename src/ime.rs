@@ -95,12 +95,15 @@ fn open_status(hwnd: HWND) -> Option<u32> {
         if ime_wnd.0.is_null() {
             return None;
         }
-        // WM_IME_CONTROL = 0x0283，IMC_GETOPENSTATUS = 0x0006
+        // WM_IME_CONTROL = 0x0283
+        // 注意：IMC_GETOPENSTATUS = 0x0005，IMC_SETOPENSTATUS = 0x0006。
+        // 之前误用了 6 —— 那是「设置」命令，每 20ms 把输入法强设成英文，
+        // 表现就是「锁死英文、切不回中文」。这里必须是 5。
         let mut result: usize = 0;
         let ok = SendMessageTimeoutW(
             ime_wnd,
             0x0283,
-            WPARAM(0x0006),
+            WPARAM(0x0005),
             LPARAM(0),
             SMTO_ABORTIFHUNG,
             100,

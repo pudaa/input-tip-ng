@@ -513,6 +513,11 @@ pub fn show(
     Some((x, y, w, h))
 }
 
+/// 当前帧尺寸（只移动位置时复用，不重新排版）
+pub fn current_size() -> Option<(i32, i32)> {
+    FRAME.with(|f| f.borrow().as_ref().map(|frame| (frame.width, frame.height)))
+}
+
 /// 当前帧位置（用于补间动画）
 pub fn current_pos() -> Option<(i32, i32)> {
     FRAME.with(|f| f.borrow().as_ref().map(|frame| (frame.x, frame.y)))
