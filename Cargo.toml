@@ -1,0 +1,36 @@
+[package]
+name = "input-tip-ng"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "InputTip 的 Rust 重写版：输入法状态提示、按窗口规则切换、可靠的开机自启"
+license = "AGPL-3.0-only"
+
+[[bin]]
+name = "input-tip-ng"
+path = "src/main.rs"
+
+[dependencies]
+# 只依赖微软官方绑定，不引入 UI 框架与运行时：单文件、小体积、可离线构建
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_System_Variant",
+    "Win32_System_TaskScheduler",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_System_Console",
+    "Win32_System_SystemInformation",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
+] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
