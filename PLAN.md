@@ -39,7 +39,25 @@
 交付：项目骨架、数据目录、单实例、常驻骨架、自启三件套（安装/卸载/自检自愈）、结构化 CLI、日志。
 验收：见第 4 节矩阵，11 项全部通过。
 
-### P1 状态识别 + 光标旁文字符号（下一步）
+### P1 状态识别 + 光标旁文字符号（进行中，2026-11-24 起）
+
+已完成：
+
+- ime：ImmGetConversionStatus（跨进程）优先，WM_IME_CONTROL 兜底，键盘布局判 JP/KR/US，Caps 直接 GetKeyState；按进程缓存最后已知状态。
+- caret：GetGUIThreadInfo 取前台线程 caret 矩形并转屏幕坐标。
+- symbol：Direct2D + DirectWrite 离屏渲染到 32 位 DIB（预乘 alpha）→ UpdateLayeredWindow；
+  灰度抗锯齿（透明底上不用次像素），按墨迹盒居中，按 GetDpiForWindow 以设备像素排版。
+- 进程：QueryFullProcessImageNameW 取 exe 名，按配置白名单过滤。
+- 进程级 DPI 感知：SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)，坐标与像素 1:1（旧版糊的主因）。
+- 排障：--probe 打印多路探测原始值、caret；--preview 渲染一张文字牌并可导出 BMP 核对。
+
+待办：
+
+- 托盘图标与菜单（暂停/恢复、设置、退出）。
+- 旧 config.ini 迁移命令。
+- 在老大常用应用里逐个验证：位置偏移、命中率、必须补的 per-app offset 覆盖表。
+
+原始计划：
 
 1. ime：多路探测（ImmGetContext + ImmGetConversionStatus → WM_IME_CONTROL → GetKeyboardLayout），按进程缓存最后已知状态，探测失败用缓存而不是猜默认值；Caps 直接 GetKeyState。
 2. caret：GetGUIThreadInfo 取光标矩形；UIA TextPattern2 兜底（Chromium / 终端）。
