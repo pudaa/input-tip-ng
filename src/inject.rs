@@ -8,7 +8,6 @@
 //! - 未签名的 DLL 注入容易被杀软误报；
 //! - 需要老大明确同意后才对指定程序启用。
 
-use std::collections::HashSet;
 use std::ffi::c_void;
 use std::os::windows::ffi::OsStrExt;
 
@@ -46,7 +45,9 @@ struct CaretShared {
 
 thread_local! {
     static SHARED: std::cell::RefCell<Option<*mut CaretShared>> = const { std::cell::RefCell::new(None) };
-    static ATTACHED: std::cell::RefCell<HashSet<u32>> = std::cell::RefCell::new(HashSet::new());
+    /// pid -> 已注入进去的 DLL 文件名：换了新 DLL 就重新注入（旧模块会被目标进程锁住、无法覆盖）
+    static ATTACHED: std::cell::RefCell<std::collections::HashMap<u32, String>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
     static SEQ: std::cell::Cell<u32> = const { std::cell::Cell::new(1) };
 }
 
@@ -328,13 +329,18 @@ pub fn caret() -> Option<RECT> {
         if !enabled_for(&proc_name) {
             return None;
         }
-        let already = ATTACHED.with(|s| s.borrow().contains(&pid));
-        if !already {
+        let Some(this_dll) = dll_path().and_then(|p| {
+            p.file_name().map(|n| n.to_string_lossy().to_string())
+        }) else {
+            return None;
+        };
+        let attached = ATTACHED.with(|s| s.borrow().get(&pid).cloned());
+        if attached.as_deref() != Some(this_dll.as_str()) {
             if !inject(pid, hwnd) {
                 return None;
             }
             ATTACHED.with(|s| {
-                s.borrow_mut().insert(pid);
+                s.borrow_mut().insert(pid, this_dll);
             });
         }
 
