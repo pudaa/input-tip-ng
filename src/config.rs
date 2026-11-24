@@ -49,6 +49,9 @@ const DEFAULT_ENTRIES: &[(&str, &str, &str)] = &[
     ("rules", "hide", ""),
     // 兼容旧配置：show 非空时按白名单处理
     ("rules", "show", ""),
+    // 注入式光标读取：默认关闭（需要签名后才建议开）
+    ("inject", "enabled", "false"),
+    ("inject", "exes", ""),
 ];
 
 #[derive(Debug, Clone, Default)]
@@ -280,6 +283,26 @@ impl AppConfig {
             .get("symbol", &format!("bg.{}", state.key()))
             .and_then(parse_color)
             .unwrap_or(0x808080)
+    }
+
+    pub fn inject_enabled(&self) -> bool {
+        self.ini
+            .get("inject", "enabled")
+            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+            .unwrap_or(false)
+    }
+
+    /// 允许注入的进程（空 = 全部允许，仅在 inject.enabled=true 时生效）
+    pub fn inject_exes(&self) -> Vec<String> {
+        self.ini
+            .get("inject", "exes")
+            .map(|v| {
+                v.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// 黑名单：列进来的进程不显示

@@ -50,6 +50,8 @@ struct Runtime {
     idle_limit_ms: u32,
     /// 上一次「输入中但取不到 caret」的诊断时间（限流用）
     last_miss: Option<Instant>,
+    /// 状态防抖：候选状态与首次出现时间
+    pending_state: Option<(InputState, Instant)>,
     /// 诊断日志限流
     log_at: Option<Instant>,
     /// 上一次光标位置变化的时间（用于判断 UIA 是否给了停滞的坐标）
@@ -198,7 +200,23 @@ fn tick() {
             ),
         );
     }
-    let state_changed = rt.last_state != Some(state);
+    // 状态防抖：中文组合输入时 opened/转换码会来回跳，直接当变化处理会导致
+    // 每拍都重渲染+重新淡入（看起来就是「图标钉在原地不跟随」）
+    if rt.last_state != Some(state) {
+        match rt.pending_state {
+            Some((pending, at)) if pending == state && now.duration_since(at).as_millis() >= 120 => {
+                rt.pending_state = None;
+            }
+            Some((pending, _)) if pending == state => {}
+            _ => {
+                rt.pending_state = Some((state, now));
+            }
+        }
+    } else {
+        rt.pending_state = None;
+    }
+    let state_changed = rt.last_state != Some(state)
+        && rt.pending_state.is_none();
     let moved = match &rt.last_caret {
         Some(prev) => !same_rect(prev, &caret_rect),
         None => true,
@@ -539,6 +557,7 @@ pub fn run(autostarted: bool) -> i32 {
                 last_caret: None,
                 last_show: None,
                 last_miss: None,
+                pending_state: None,
                 log_at: None,
                 last_move: None,
                 tween: None,

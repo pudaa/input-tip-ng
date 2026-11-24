@@ -1,3 +1,6 @@
+[workspace]
+members = ["hook"]
+
 [package]
 name = "input-tip-ng"
 version = "0.1.0"
@@ -21,6 +24,9 @@ windows = { version = "0.62", features = [
     "Win32_System_Variant",
     "Win32_System_TaskScheduler",
     "Win32_System_Registry",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Memory",
+    "Win32_System_Diagnostics_Debug",
     "Win32_System_Threading",
     "Win32_System_Console",
     "Win32_System_SystemInformation",

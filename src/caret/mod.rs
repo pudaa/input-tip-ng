@@ -65,6 +65,10 @@ pub fn rect() -> Option<RECT> {
             bottom: pt.y + height,
         });
     }
+    // 注入式读取（默认关闭）：Chromium/Electron/Qt 只有这条路能拿到真实光标
+    if let Some(r) = crate::inject::caret() {
+        return Some(r);
+    }
     if let Some(r) = heavy_cached() {
         return Some(r);
     }

@@ -15,6 +15,7 @@ mod caret;
 mod config;
 mod icon;
 mod ime;
+mod inject;
 mod log;
 mod migrate;
 mod process;

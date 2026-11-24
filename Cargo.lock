@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "input-tip-hook"
+version = "0.1.0"
+dependencies = [
+ "windows",
+]
+
+[[package]]
 name = "input-tip-ng"
 version = "0.1.0"
 dependencies = [
