@@ -481,6 +481,13 @@ pub fn verify_and_repair(cfg: &mut AppConfig) -> bool {
         }
     }
 
+    // 开发构建（target\debug|release）不登记自启：避免测试时把临时路径写进登录项
+    let exe_text = st.exe.display().to_string().to_lowercase();
+    if exe_text.contains("\\target\\debug\\") || exe_text.contains("\\target\\release\\") {
+        log::info("autostart", "开发构建，跳过自启登记");
+        return st.healthy;
+    }
+
     if !st.healthy {
         log::warn("autostart", &format!("自启不健康，尝试修复：{}", st.task.detail));
         match install_preferring(&st.exe, cfg.autostart_delay_secs(), st.method) {
