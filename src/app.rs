@@ -50,6 +50,10 @@ struct Runtime {
     idle_limit_ms: u32,
     /// 上一次「输入中但取不到 caret」的诊断时间（限流用）
     last_miss: Option<Instant>,
+    /// 诊断日志限流
+    log_at: Option<Instant>,
+    /// 上一次光标位置变化的时间（用于判断 UIA 是否给了停滞的坐标）
+    last_move: Option<Instant>,
     /// 位置补间：起止点与开始时间
     tween: Option<(i32, i32, i32, i32, Instant)>,
 }
@@ -176,11 +180,39 @@ fn tick() {
     };
 
     let state = ime::detect(fg);
+
+    // 诊断：输入中定期记录 状态+光标，用于分析「中文不跟随」这类问题
+    let now = Instant::now();
+    if rt.log_at.map(|t| now.duration_since(t).as_millis() >= 300).unwrap_or(true) {
+        rt.log_at = Some(now);
+        log::write(
+            "caret",
+            "debug",
+            &format!(
+                "state={} caret=({},{}) {}x{} proc={proc_name}",
+                state.key(),
+                caret_rect.left,
+                caret_rect.top,
+                caret_rect.right - caret_rect.left,
+                caret_rect.bottom - caret_rect.top
+            ),
+        );
+    }
     let state_changed = rt.last_state != Some(state);
     let moved = match &rt.last_caret {
         Some(prev) => !same_rect(prev, &caret_rect),
         None => true,
     };
+    // 光标长时间不动但用户还在打字：可能是 UIA 返回了停滞的矩形，强制刷新一次
+    if moved {
+        rt.last_move = Some(now);
+    } else if rt.last_show.is_some()
+        && rt.last_move.map(|t| now.duration_since(t).as_millis() > 350).unwrap_or(false)
+    {
+        crate::caret::invalidate_cache();
+        rt.last_move = Some(now);
+    }
+
     let changed = state_changed || moved;
 
     // 状态没变、只是光标移动：不重新排版也不重新淡入，直接把已有的牌子补间平移过去
@@ -507,6 +539,8 @@ pub fn run(autostarted: bool) -> i32 {
                 last_caret: None,
                 last_show: None,
                 last_miss: None,
+                log_at: None,
+                last_move: None,
                 tween: None,
             });
         }

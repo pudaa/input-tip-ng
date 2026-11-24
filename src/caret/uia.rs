@@ -26,8 +26,20 @@ use windows::Win32::UI::Accessibility::{
     TextUnit_Character, TextUnit_Line, UIA_TextPattern2Id, UIA_TextPatternId,
 };
 
+// 每个 tick 都 CoCreateInstance 会不停创建 UIA 实例（线程数、私有内存一路涨），
+// 这里只创建一次并复用。
+thread_local! {
+    static AUTO: RefCell<Option<IUIAutomation>> = const { RefCell::new(None) };
+}
+
 fn automation() -> Option<IUIAutomation> {
-    unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok() }
+    AUTO.with(|slot| {
+        if slot.borrow().is_none() {
+            let created = unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok() };
+            *slot.borrow_mut() = created;
+        }
+        slot.borrow().clone()
+    })
 }
 
 /// 从 SAFEARRAY 里读第一组 (x, y, w, h)

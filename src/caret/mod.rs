@@ -14,9 +14,38 @@ mod uia;
 
 pub use uia::ensure_event_handler;
 
+use std::cell::RefCell;
+use std::time::Instant;
+
 use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetForegroundWindow, GetWindowTextW, GetWindowRect};
+
+/// UIA/MSAA 是跨进程 COM 调用，每 20ms 一次太贵；缓存 80ms，
+/// 期间用上次结果（位置补间本身会把移动做平滑，不会显得卡顿）。
+const UIA_CACHE_MS: u128 = 80;
+
+thread_local! {
+    static HEAVY_CACHE: RefCell<Option<(Instant, Option<RECT>)>> = const { RefCell::new(None) };
+}
+
+/// 让下一拍强制重新查询（IME 组合期 UIA 可能返回停滞的矩形）
+pub fn invalidate_cache() {
+    HEAVY_CACHE.with(|slot| *slot.borrow_mut() = None);
+}
+
+fn heavy_cached() -> Option<RECT> {
+    HEAVY_CACHE.with(|slot| {
+        if let Some((at, value)) = slot.borrow().as_ref() {
+            if at.elapsed().as_millis() < UIA_CACHE_MS {
+                return *value;
+            }
+        }
+        let fresh = uia::caret().or_else(msaa::caret);
+        *slot.borrow_mut() = Some((Instant::now(), fresh));
+        fresh
+    })
+}
 
 /// 返回 caret 的屏幕坐标矩形
 pub fn rect() -> Option<RECT> {
@@ -36,10 +65,7 @@ pub fn rect() -> Option<RECT> {
             bottom: pt.y + height,
         });
     }
-    if let Some(r) = uia::caret() {
-        return Some(r);
-    }
-    if let Some(r) = msaa::caret() {
+    if let Some(r) = heavy_cached() {
         return Some(r);
     }
     anchor::rect()
