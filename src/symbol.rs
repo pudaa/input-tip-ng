@@ -462,8 +462,10 @@ pub fn show(
                 crate::log::error("symbol", &format!("EndDraw 失败: {e}"));
             }
 
-            let x = caret.left + (offset.0 as f32 * scale).round() as i32;
-            let y = caret.top + (offset.1 as f32 * scale).round() as i32 - h_px;
+            // 摆在光标右侧并垂直居中（老大要求：右侧、跟随光标）
+            let caret_h = (caret.bottom - caret.top).max(1);
+            let x = caret.right + (offset.0 as f32 * scale).round() as i32;
+            let y = caret.top + (caret_h - h_px) / 2;
 
             let mut pixels = vec![0u8; (w_px * h_px * 4) as usize];
             if !bits.is_null() {
@@ -509,6 +511,29 @@ pub fn show(
         *a.borrow_mut() = Some(Anim { start: Instant::now(), fading_in: true });
     });
     Some((x, y, w, h))
+}
+
+/// 当前帧位置（用于补间动画）
+pub fn current_pos() -> Option<(i32, i32)> {
+    FRAME.with(|f| f.borrow().as_ref().map(|frame| (frame.x, frame.y)))
+}
+
+/// 只移动位置，不重新排版（补间动画每帧调用）
+pub fn move_to(hwnd: HWND, x: i32, y: i32) -> bool {
+    if hwnd.0.is_null() {
+        return false;
+    }
+    let mut moved = false;
+    FRAME.with(|f| {
+        let mut slot = f.borrow_mut();
+        if let Some(frame) = slot.as_mut() {
+            frame.x = x;
+            frame.y = y;
+            let _ = blit(hwnd, frame, 1.0);
+            moved = true;
+        }
+    });
+    moved
 }
 
 /// 每帧推进动画：返回是否需要继续调用

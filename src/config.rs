@@ -18,6 +18,8 @@ use crate::state::InputState;
 const DEFAULT_ENTRIES: &[(&str, &str, &str)] = &[
     ("app", "language", "zh-CN"),
     ("app", "poll_interval_ms", "20"),
+    // 静止多久后不再显示提示（只在真正输入时出现）
+    ("app", "idle_limit_ms", "1200"),
     ("autostart", "enabled", "true"),
     ("autostart", "method", "task"),
     ("autostart", "delay_secs", "20"),
@@ -220,6 +222,13 @@ impl AppConfig {
     pub fn set_autostart(&mut self, enabled: bool, method: &str) {
         self.ini.set("autostart", "enabled", if enabled { "true" } else { "false" });
         self.ini.set("autostart", "method", method);
+    }
+
+    pub fn idle_limit_ms(&self) -> u32 {
+        self.ini
+            .get("app", "idle_limit_ms")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1200)
     }
 
     pub fn poll_interval_ms(&self) -> u32 {

@@ -11,6 +11,8 @@ use windows::Win32::Foundation::{
     WPARAM,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::SystemInformation::GetTickCount;
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, FindWindowW,
@@ -44,6 +46,25 @@ struct Runtime {
     last_state: Option<InputState>,
     last_caret: Option<RECT>,
     last_show: Option<Instant>,
+    /// 只在用户真的在输入时显示（点一下窗口不算）
+    idle_limit_ms: u32,
+    /// 位置补间：起止点与开始时间
+    tween: Option<(i32, i32, i32, i32, Instant)>,
+}
+
+/// 距离上一次键盘/鼠标输入过了多久
+fn idle_ms() -> u32 {
+    unsafe {
+        let mut lii = LASTINPUTINFO {
+            cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
+            dwTime: 0,
+        };
+        if GetLastInputInfo(&mut lii).as_bool() {
+            GetTickCount().wrapping_sub(lii.dwTime)
+        } else {
+            0
+        }
+    }
 }
 
 static RT: Mutex<Option<Runtime>> = Mutex::new(None);
@@ -87,6 +108,26 @@ fn tick() {
 
     // 先推进淡入淡出；没有动画时几乎零开销
     let _ = symbol::tick_animation(hwnd_of(rt));
+
+    // 位置补间：90ms ease-out，做出「跟手」的动效而不是瞬移
+    if let Some((fx, fy, tx, ty, start)) = rt.tween {
+        let t = (start.elapsed().as_millis() as f32 / 90.0).clamp(0.0, 1.0);
+        let e = 1.0 - (1.0 - t).powi(3);
+        let x = fx + ((tx - fx) as f32 * e) as i32;
+        let y = fy + ((ty - fy) as f32 * e) as i32;
+        let _ = symbol::move_to(hwnd_of(rt), x, y);
+        if t >= 1.0 {
+            rt.tween = None;
+        }
+    }
+
+    // 用户静止超过 idle_limit_ms 就收起提示：点开窗口不该冒出来
+    if idle_ms() > rt.idle_limit_ms {
+        hide(rt);
+        rt.last_state = None;
+        rt.last_caret = None;
+        return;
+    }
 
     if !rt.theme.enabled || rt.paused {
         hide(rt);
@@ -158,6 +199,13 @@ fn tick() {
             if dpi == 0 { 96 } else { dpi },
         );
         if let Some((x, y, w, h)) = shown {
+            let from = symbol::current_pos();
+            if let Some((px, py)) = from {
+                let (dx, dy) = ((x - px).abs(), (y - py).abs());
+                if dx + dy > 2 && dx + dy < 400 {
+                    rt.tween = Some((px, py, x, y, Instant::now()));
+                }
+            }
             log::write(
                 "app",
                 "debug",
@@ -400,12 +448,14 @@ pub fn run(autostarted: bool) -> i32 {
                 hide_rules,
                 show_rules,
                 paused: false,
+                idle_limit_ms: cfg.idle_limit_ms(),
                 last_fg: 0,
                 last_proc: String::new(),
                 last_tip_state: "",
                 last_state: None,
                 last_caret: None,
                 last_show: None,
+                tween: None,
             });
         }
 

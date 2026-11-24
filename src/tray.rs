@@ -110,6 +110,13 @@ pub fn popup_menu(hwnd: HWND, paused: bool) -> MenuAction {
             None,
         );
         let _ = DestroyMenu(menu);
+        // 标准做法：菜单关闭后补一条 WM_NULL，避免下次点托盘时前台激活状态不对
+        let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+            Some(hwnd),
+            windows::Win32::UI::WindowsAndMessaging::WM_NULL,
+            windows::Win32::Foundation::WPARAM(0),
+            windows::Win32::Foundation::LPARAM(0),
+        );
 
         match cmd.0 {
             1 => MenuAction::TogglePause,
