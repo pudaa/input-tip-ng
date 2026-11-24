@@ -4,6 +4,14 @@ InputTip 的 Rust 重写版。沿用「读当前输入法状态 → 在光标旁
 
 > 当前处于 P0（骨架与自启）阶段，尚未包含状态识别与提示功能。路线与验收标准见 [PLAN.md](PLAN.md)。
 
+## 外观预览
+
+文字牌的真实渲染结果（24×20 像素，下图放大 6 倍便于看清边缘与字形）：
+
+![CN](docs/images/chip-cn.png) ![EN](docs/images/chip-en.png) ![CAPS](docs/images/chip-caps.png)
+
+用 `input-tip-ng --preview CN` 可以在屏幕上预览一次，配色、字号、圆角都取自 config.ini。
+
 ## 为什么重写而不是改旧版
 
 旧版 InputTip 是 AutoHotkey v2 项目（60 个 .ahk、约 1.67 万行、随包带 AHK 运行时）。四个痛点的根因都在技术栈：
