@@ -27,6 +27,22 @@ const UIA_CACHE_MS: u128 = 80;
 
 thread_local! {
     static HEAVY_CACHE: RefCell<Option<(Instant, Option<RECT>)>> = const { RefCell::new(None) };
+    /// 注入查询要往目标 UI 线程发同步消息，太频繁会拖慢目标应用的输入
+    static INJECT_CACHE: RefCell<Option<(Instant, Option<RECT>)>> = const { RefCell::new(None) };
+}
+
+/// 注入查询至少间隔 120ms：SendMessageTimeout 是同步的，每 20ms 发一次会给前台应用添延迟
+fn inject_cached() -> Option<RECT> {
+    INJECT_CACHE.with(|slot| {
+        if let Some((at, value)) = slot.borrow().as_ref() {
+            if at.elapsed().as_millis() < 120 {
+                return *value;
+            }
+        }
+        let fresh = crate::inject::caret();
+        *slot.borrow_mut() = Some((Instant::now(), fresh));
+        fresh
+    })
 }
 
 /// 让下一拍强制重新查询（IME 组合期 UIA 可能返回停滞的矩形）
@@ -66,7 +82,7 @@ pub fn rect() -> Option<RECT> {
         });
     }
     // 注入式读取（默认关闭）：Chromium/Electron/Qt 只有这条路能拿到真实光标
-    if let Some(r) = crate::inject::caret() {
+    if let Some(r) = inject_cached() {
         return Some(r);
     }
     if let Some(r) = heavy_cached() {
@@ -121,8 +137,10 @@ pub fn diag() -> String {
             "前台: {} class={cls} title={ttl:?}\n",
             crate::process::name(fg).unwrap_or_default()
         ));
+        uia::wake_accessible();
         out.push_str(&format!("探测: {}\n", probe()));
         out.push_str(&format!("UIA: {}\n", uia::probe_text()));
+        out.push_str(&format!("UIA 追踪: {}\n", uia::caret_trace()));
         out.push_str(&format!("最终: {}\n", fmt_rect(rect())));
 
         let mut win = RECT::default();
