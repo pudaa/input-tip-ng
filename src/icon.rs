@@ -133,7 +133,8 @@ fn render(size: i32) -> Option<Vec<u8>> {
     }
 }
 
-const SIZES: [i32; 8] = [16, 20, 24, 32, 40, 48, 64, 256];
+// 256 那一档单独要 262KB，等打包 exe 图标时再生成；托盘/窗口只需到 64
+const SIZES: [i32; 7] = [16, 20, 24, 32, 40, 48, 64];
 
 /// 生成多尺寸 ICO 文件
 pub fn generate_ico(path: &Path) -> Result<(), String> {
