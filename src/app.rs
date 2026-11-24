@@ -1,32 +1,155 @@
-//! 常驻进程外壳：单实例 + 隐藏窗口 + 消息循环。
+//! 常驻进程：单实例 + 隐藏窗口 + 轮询循环 + 光标旁文字牌。
 //!
-//! 当前 P0 阶段只提供「活着」与「可被 --exit 关闭」的最小骨架；
-//! 托盘、状态提示、规则引擎在后续阶段接入同一个窗口与消息循环。
+//! 每一拍做四件事：取前台窗口 -> 白名单判断 -> 探测状态与 caret -> 决定显示/隐藏。
+//! 全部在同一线程完成（一个 Mutex 保护运行时状态），不跨线程共享窗口句柄。
+
+use std::sync::Mutex;
+use std::time::Instant;
 
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM,
+    CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HINSTANCE, HWND, LPARAM, LRESULT, RECT,
+    WPARAM,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, FindWindowW, GetMessageW,
-    MSG, PostMessageW, PostQuitMessage, RegisterClassW, SetTimer, TranslateMessage, WINDOW_EX_STYLE,
-    WM_CLOSE, WM_DESTROY, WM_TIMER, WNDCLASSW, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, FindWindowW,
+    GetForegroundWindow, GetMessageW, MSG, PostMessageW, PostQuitMessage, RegisterClassW, SetTimer,
+    TranslateMessage, WINDOW_EX_STYLE, WM_CLOSE, WM_DESTROY, WM_TIMER, WNDCLASSW, WS_POPUP,
 };
 
-use crate::log;
+use crate::config::{AppConfig, SymbolTheme};
+use crate::state::InputState;
+use crate::{caret, ime, log, process, symbol};
 
 const WINDOW_CLASS: &str = "InputTipNgResidentWindow";
+
+struct Runtime {
+    symbol: isize,
+    theme: SymbolTheme,
+    /// 每状态一份：(状态, 文字, 底色)
+    styles: Vec<(InputState, String, u32)>,
+    rules: Vec<String>,
+    last_state: Option<InputState>,
+    last_caret: Option<RECT>,
+    last_show: Option<Instant>,
+}
+
+static RT: Mutex<Option<Runtime>> = Mutex::new(None);
+
+const ALL_STATES: [InputState; 6] = [
+    InputState::Cn,
+    InputState::En,
+    InputState::Caps,
+    InputState::Us,
+    InputState::Jp,
+    InputState::Kr,
+];
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-/// 请求已运行实例退出；返回是否找到实例
-pub fn request_exit() -> bool {
+fn hwnd_of(rt: &Runtime) -> HWND {
+    HWND(rt.symbol as *mut core::ffi::c_void)
+}
+
+fn same_rect(a: &RECT, b: &RECT) -> bool {
+    a.left == b.left && a.top == b.top && a.right == b.right && a.bottom == b.bottom
+}
+
+fn hide(rt: &mut Runtime) {
+    if rt.last_show.is_some() {
+        symbol::hide(hwnd_of(rt));
+    }
+    rt.last_show = None;
+}
+
+/// 一拍：判断该不该显示、显示什么
+fn tick() {
+    let mut guard = match RT.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    let Some(rt) = guard.as_mut() else { return };
+
+    if !rt.theme.enabled {
+        hide(rt);
+        return;
+    }
+
+    let fg = unsafe { GetForegroundWindow() };
+    if fg.0.is_null() {
+        hide(rt);
+        return;
+    }
+
+    let proc_name = process::name(fg).unwrap_or_default();
+    let allowed =
+        rt.rules.is_empty() || rt.rules.iter().any(|r| r.eq_ignore_ascii_case(&proc_name));
+    if !allowed {
+        hide(rt);
+        rt.last_state = None;
+        rt.last_caret = None;
+        return;
+    }
+
+    let Some(caret_rect) = caret::rect() else {
+        hide(rt);
+        rt.last_state = None;
+        rt.last_caret = None;
+        return;
+    };
+
+    let state = ime::detect(fg);
+    let changed = rt.last_state != Some(state)
+        || match &rt.last_caret {
+            Some(prev) => !same_rect(prev, &caret_rect),
+            None => true,
+        };
+
+    let now = Instant::now();
+    if changed {
+        let (text, bg) = rt
+            .styles
+            .iter()
+            .find(|(s, _, _)| *s == state)
+            .map(|(_, t, b)| (t.clone(), *b))
+            .unwrap_or_else(|| (state.key().to_string(), 0x808080));
+
+        let dpi = unsafe { windows::Win32::UI::HiDpi::GetDpiForWindow(fg) };
+        symbol::show(
+            hwnd_of(rt),
+            &text,
+            bg,
+            rt.theme.fg,
+            &rt.theme.font,
+            rt.theme.size,
+            rt.theme.weight,
+            rt.theme.opacity,
+            (rt.theme.offset_x, rt.theme.offset_y),
+            rt.theme.corner,
+            &caret_rect,
+            if dpi == 0 { 96 } else { dpi },
+        );
+        rt.last_state = Some(state);
+        rt.last_caret = Some(caret_rect);
+        rt.last_show = Some(now);
+    } else if let Some(shown_at) = rt.last_show {
+        if now.duration_since(shown_at).as_millis() as u64 >= rt.theme.hide_delay_ms {
+            symbol::hide(hwnd_of(rt));
+            rt.last_show = None;
+        }
+    }
+}
+
+fn request_exit_impl() -> bool {
     let class = wide(WINDOW_CLASS);
     unsafe {
-        match FindWindowW(PCWSTR::from_raw(class.as_ptr()), PCWSTR::null()) {
+        match FindWindowW(
+            windows::core::PCWSTR::from_raw(class.as_ptr()),
+            windows::core::PCWSTR::null(),
+        ) {
             Ok(hwnd) if !hwnd.0.is_null() => {
                 let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
                 true
@@ -36,17 +159,27 @@ pub fn request_exit() -> bool {
     }
 }
 
-use windows::core::PCWSTR;
+/// 请求已运行实例退出；返回是否找到实例
+pub fn request_exit() -> bool {
+    request_exit_impl()
+}
 
-unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+unsafe extern "system" fn wndproc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     match msg {
         WM_TIMER => {
-            log::write("app", "debug", "心跳");
+            tick();
             LRESULT(0)
         }
         WM_CLOSE => {
             log::info("app", "收到退出请求");
-            let _ = unsafe { DestroyWindow(hwnd) };
+            unsafe {
+                let _ = DestroyWindow(hwnd);
+            }
             LRESULT(0)
         }
         WM_DESTROY => {
@@ -60,19 +193,30 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 /// 启动常驻进程；已有实例时返回 0（自启与手工启动并存不该报错）
 pub fn run(autostarted: bool) -> i32 {
     let _ = log::ensure_dirs();
+    let cfg = AppConfig::load();
+    let theme = cfg.symbol_theme();
+    let styles: Vec<(InputState, String, u32)> = ALL_STATES
+        .iter()
+        .map(|s| (*s, cfg.symbol_text(*s), cfg.symbol_bg(*s)))
+        .collect();
+    let rules = cfg.rules_show();
+    let poll_ms = cfg.poll_interval_ms();
+
     log::info(
         "app",
         &format!(
-            "启动 input-tip-ng v{}（{}）",
+            "启动 input-tip-ng v{}（{}），白名单 {} 个进程，轮询 {}ms",
             env!("CARGO_PKG_VERSION"),
-            if autostarted { "自启" } else { "手工" }
+            if autostarted { "自启" } else { "手工" },
+            rules.len(),
+            poll_ms
         ),
     );
 
     let mutex_name = wide("Local\\input-tip-ng-singleton");
 
     unsafe {
-        let mutex = match CreateMutexW(None, false, PCWSTR::from_raw(mutex_name.as_ptr())) {
+        let mutex = match CreateMutexW(None, false, windows::core::PCWSTR::from_raw(mutex_name.as_ptr())) {
             Ok(h) => h,
             Err(e) => {
                 log::error("app", &format!("创建单实例互斥体失败: {e}"));
@@ -98,7 +242,7 @@ pub fn run(autostarted: bool) -> i32 {
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wndproc),
             hInstance: HINSTANCE(instance.0),
-            lpszClassName: PCWSTR::from_raw(class.as_ptr()),
+            lpszClassName: windows::core::PCWSTR::from_raw(class.as_ptr()),
             ..Default::default()
         };
         if RegisterClassW(&wc) == 0 {
@@ -108,8 +252,8 @@ pub fn run(autostarted: bool) -> i32 {
 
         let hwnd = match CreateWindowExW(
             WINDOW_EX_STYLE(0),
-            PCWSTR::from_raw(class.as_ptr()),
-            PCWSTR::from_raw(title.as_ptr()),
+            windows::core::PCWSTR::from_raw(class.as_ptr()),
+            windows::core::PCWSTR::from_raw(title.as_ptr()),
             WS_POPUP,
             0,
             0,
@@ -127,7 +271,28 @@ pub fn run(autostarted: bool) -> i32 {
             }
         };
 
-        let _ = SetTimer(Some(hwnd), 1, 5 * 60 * 1000, None);
+        let symbol_hwnd = symbol::create();
+        if symbol_hwnd.0.is_null() {
+            log::error("app", "创建文字牌窗口失败，状态提示将不可用");
+        }
+
+        {
+            let mut guard = match RT.lock() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            *guard = Some(Runtime {
+                symbol: symbol_hwnd.0 as isize,
+                theme,
+                styles,
+                rules,
+                last_state: None,
+                last_caret: None,
+                last_show: None,
+            });
+        }
+
+        let _ = SetTimer(Some(hwnd), 1, poll_ms, None);
         log::info("app", "常驻进程已就绪");
 
         let mut msg = MSG::default();

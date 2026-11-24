@@ -11,8 +11,13 @@
 
 mod app;
 mod autostart;
+mod caret;
 mod config;
+mod ime;
 mod log;
+mod process;
+mod state;
+mod symbol;
 
 use std::process::ExitCode;
 
@@ -31,11 +36,16 @@ input-tip-ng —— InputTip 的 Rust 重写版
   input-tip-ng --uninstall-autostart 移除全部自启项
   input-tip-ng --check-autostart     检查自启状态并自愈（退出码 0 表示健康）
   input-tip-ng --exit                通知正在运行的实例退出
+  input-tip-ng --probe               打印前台窗口的进程/状态/caret 探测详情（排障用）
+  input-tip-ng --preview [CN|EN|CAPS|US|JP|KR]  在屏幕上预览一次文字牌（校色/校字号用）
   input-tip-ng --version             显示版本
   input-tip-ng --help                显示本帮助
 ";
 
 fn main() -> ExitCode {
+    // 必须在任何窗口创建之前：Per-Monitor V2 让坐标与像素 1:1，否则系统会把
+    // 整个窗口按 DPI 拉伸，文字与圆角都会糊（旧版就吃了这个亏）。
+    enable_dpi_awareness();
     attach_parent_console();
     // 控制台默认 GBK，直接输出 UTF-8 会乱码；无控制台时调用无害
     unsafe {
@@ -58,12 +68,23 @@ fn main() -> ExitCode {
         "--uninstall-autostart" => with_com(cmd_uninstall),
         "--check-autostart" => with_com(cmd_check),
         "--exit" => cmd_exit(),
+        "--probe" => cmd_probe(),
+        "--preview" => cmd_preview(args.get(1).map(String::as_str).unwrap_or("CN")),
         "" | "--autostart" => cmd_run(cmd == "--autostart"),
         other => {
             eprintln!("未知参数: {other}\n");
             println!("{HELP}");
             ExitCode::from(2)
         }
+    }
+}
+
+fn enable_dpi_awareness() {
+    use windows::Win32::UI::HiDpi::{
+        DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
+    };
+    unsafe {
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
 }
 
@@ -178,6 +199,92 @@ fn cmd_check() -> ExitCode {
     } else {
         ExitCode::from(1)
     }
+}
+
+/// 预览：在屏幕固定位置显示 8 秒文字牌，便于用截图核对颜色、字号与圆角
+fn cmd_preview(state_key: &str) -> ExitCode {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, MSG, PM_REMOVE, PeekMessageW, TranslateMessage,
+    };
+
+    let cfg = config::AppConfig::load();
+    let theme = cfg.symbol_theme();
+    let state = state::InputState::from_key(state_key).unwrap_or(state::InputState::Cn);
+    let text = cfg.symbol_text(state);
+    let bg = cfg.symbol_bg(state);
+
+    let hwnd = symbol::create();
+    if hwnd.0.is_null() {
+        eprintln!("创建预览窗口失败");
+        return ExitCode::from(1);
+    }
+    let caret = RECT { left: 900, top: 600, right: 902, bottom: 602 };
+    let dpi = unsafe {
+        let fg = windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow();
+        let d = windows::Win32::UI::HiDpi::GetDpiForWindow(fg);
+        if d == 0 { 96 } else { d }
+    };
+    unsafe {
+        std::env::set_var(
+            "ITNG_PREVIEW_DUMP",
+            std::env::temp_dir().join("itng-preview.bmp"),
+        );
+    }
+    symbol::show(
+        hwnd,
+        &text,
+        bg,
+        theme.fg,
+        &theme.font,
+        theme.size,
+        theme.weight,
+        theme.opacity,
+        (theme.offset_x, theme.offset_y),
+        theme.corner,
+        &caret,
+        dpi,
+    );
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    let mut msg = MSG::default();
+    unsafe {
+        while std::time::Instant::now() < deadline {
+            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
+    }
+    println!("预览结束（状态 {}，文字 {}，底色 0x{:06X}）", state.key(), text, bg);
+    ExitCode::SUCCESS
+}
+
+fn cmd_probe() -> ExitCode {
+    unsafe {
+        let fg = windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow();
+        let proc_name = process::name(fg).unwrap_or_else(|| "<未知>".to_string());
+        let state = ime::detect(fg);
+        let dpi = windows::Win32::UI::HiDpi::GetDpiForWindow(fg);
+        println!("前台进程: {proc_name} (hwnd={}, dpi={})", fg.0 as isize, dpi);
+        println!("探测原始值: {}", ime::probe(fg));
+        println!("判定状态: {}", state.key());
+        match caret::rect() {
+            Some(c) => println!(
+                "caret: 屏幕坐标 ({}, {}) 尺寸 {}x{}",
+                c.left,
+                c.top,
+                c.right - c.left,
+                c.bottom - c.top
+            ),
+            None => println!("caret: 未取到"),
+        }
+        if let Some(owner) = caret::owner() {
+            println!("caret 所属窗口: {}", owner.0 as isize);
+        }
+    }
+    ExitCode::SUCCESS
 }
 
 fn cmd_exit() -> ExitCode {
