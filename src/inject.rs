@@ -174,14 +174,25 @@ fn inject(pid: u32, hwnd: HWND) -> bool {
             return false;
         };
         let _ = WaitForSingleObject(thread, 5000);
-        let mut hmod = 0u32;
-        let _ = GetExitCodeThread(thread, &mut hmod);
+        // 注意：GetExitCodeThread 只有 32 位，x64 模块基址会被截断（跳到野地址直接崩）。
+        // 改成加载完成后在目标里枚举模块，按名字取基址。
+        let mut exit = 0u32;
+        let _ = GetExitCodeThread(thread, &mut exit);
         let _ = CloseHandle(thread);
         let _ = VirtualFreeEx(process, remote_path, 0, MEM_RELEASE);
-        if hmod == 0 {
+        if exit == 0 {
             let _ = CloseHandle(process);
             return false;
         }
+        let dll_name = dll
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let remote_base = module_base(process, &dll_name);
+        let Some(remote_base) = remote_base else {
+            let _ = CloseHandle(process);
+            return false;
+        };
 
         let Ok(local_hook) = windows::Win32::System::LibraryLoader::LoadLibraryW(&HSTRING::from(
             dll.to_string_lossy().to_string(),
@@ -197,7 +208,7 @@ fn inject(pid: u32, hwnd: HWND) -> bool {
             return false;
         };
         let offset = (local_start as usize) - (local_hook.0 as usize);
-        let remote_start = (hmod as usize + offset) as *const c_void;
+        let remote_start = (remote_base + offset) as *const c_void;
         let Ok(thread2) = CreateRemoteThread(
             process,
             None,
@@ -211,10 +222,73 @@ fn inject(pid: u32, hwnd: HWND) -> bool {
             return false;
         };
         let _ = WaitForSingleObject(thread2, 5000);
+        let mut start_code = 0u32;
+        let _ = GetExitCodeThread(thread2, &mut start_code);
         let _ = CloseHandle(thread2);
         let _ = CloseHandle(process);
-        true
+        // ITNGStart 返回 0 表示钩子装上了；非 0 会把错误码写在共享内存里
+        start_code == 0
     }
+}
+
+/// 强制注入并查询一次（--inject-test 用，跳过开关与前台判断，便于单独验证链路）
+pub fn force_test(pid: u32) -> String {
+    use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId};
+    use windows::Win32::Foundation::LPARAM;
+    use windows::core::BOOL;
+
+    static mut FOUND: isize = 0;
+    unsafe extern "system" fn find(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let mut wpid = 0u32;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut wpid)) };
+        if wpid == lparam.0 as u32 {
+            unsafe { FOUND = hwnd.0 as isize };
+            return BOOL(0);
+        }
+        BOOL(1)
+    }
+    let mut out = String::new();
+    unsafe {
+        let _ = EnumWindows(Some(find), LPARAM(pid as isize));
+        let hwnd = HWND(FOUND as *mut c_void);
+        if hwnd.0.is_null() {
+            return "没有找到该进程的顶层窗口".to_string();
+        }
+        out.push_str(&format!("目标 hwnd={}\n", hwnd.0 as isize));
+        let ok = inject(pid, hwnd);
+        out.push_str(&format!("注入/装钩子: {ok}\n"));
+        if !ok {
+            return out;
+        }
+        let view = match shared() {
+            Some(v) => v,
+            None => {
+                out.push_str("共享内存不可用\n");
+                return out;
+            }
+        };
+        let seq = SEQ.with(|s| {
+            let v = s.get().wrapping_add(1);
+            s.set(v);
+            v
+        });
+        let mut result = 0usize;
+        let _ = SendMessageTimeoutW(
+            hwnd,
+            HOOK_QUERY_MSG,
+            WPARAM(seq as usize),
+            LPARAM(0),
+            SMTO_ABORTIFHUNG,
+            200,
+            Some(&mut result),
+        );
+        let shared = &*view;
+        out.push_str(&format!(
+            "共享内存: seq={} (期望 {seq}) rect=({},{}) {}x{}\n",
+            shared.seq, shared.left, shared.top, shared.width, shared.height
+        ));
+    }
+    out
 }
 
 /// 是否允许注入这个进程（配置白名单，空 = 允许所有）

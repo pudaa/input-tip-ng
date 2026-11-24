@@ -88,6 +88,13 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             if msg.message == HOOK_QUERY_MSG {
                 let seq = wparam.0 as u32;
                 if let Some(shared) = shared() {
+                    // 先写「钩子跑到了」，再尝试填坐标：宿主据此区分
+                    // 「钩子没装上」和「钩子装上了但目标没有 caret」
+                    shared.seq = seq;
+                    shared.width = -1;
+                    shared.left = 0;
+                    shared.top = 0;
+                    shared.height = 0;
                     let mut pt = POINT::default();
                     let focus = GetFocus();
                     if GetCaretPos(&mut pt).is_ok() && !focus.0.is_null() {
@@ -99,7 +106,6 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                         };
                         let _ = GetGUIThreadInfo(GetCurrentThreadId(), &mut gti);
                         let height = (gti.rcCaret.bottom - gti.rcCaret.top).max(8);
-                        shared.seq = seq;
                         shared.left = screen.x;
                         shared.top = screen.y;
                         shared.width = 2;
@@ -136,7 +142,13 @@ pub extern "system" fn ITNGStart(hwnd_value: usize) -> i32 {
                 let _ = shared();
                 0
             }
-            Err(_) => -2,
+            Err(e) => {
+                if let Some(shared) = shared() {
+                    shared.seq = 0;
+                    shared.width = -100 - e.code().0;
+                }
+                -2
+            }
         }
     }
 }
