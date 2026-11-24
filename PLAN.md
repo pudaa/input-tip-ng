@@ -83,6 +83,29 @@
 - 修掉一个崩溃：GetExitCodeThread 只有 32 位，x64 模块基址被截断会跳到野地址。
 - 默认关闭（[inject] enabled=false）；未签名，存在杀软误报风险，只在列出的 exe 上启用。
 
+第三轮（按老大反馈：浏览器/Electron 不跟随、VSCode 也不跟随）：
+
+- 旧版 InputTip 官方文档确认：HOOK 模式就是「注入后在目标进程内调 GetCaretPos」，
+  不是 UIA。我们的 DLL 走同一条路，方向没错。
+- 本机 [inject] exes 只有 chrome.exe，而老大实际用 Edge / VSCode / Typora，
+  注入根本没发生在这些进程上——这是「注入成效甚微」的直接原因之一。
+- 新增 IAccessible2 文本接口（src/caret/ia2.rs：caretOffset + characterExtents），
+  实测 Chromium/Electron/Qt 的跨进程 QI 直接返回 E_NOINTERFACE：这些程序默认没开
+  无障碍树（UIA/IA2 都要靠它），只有读屏客户端在场或 --force-renderer-accessibility
+  才会打开。因此 IA2 不能当主路径，只能作为「无障碍树已开」时的补充。
+- UIA 客户端从 CUIAutomation（UIA1）换成 CUIAutomation8（UIA3）：Chromium 的 UIA
+  提供者只对 UIA3 客户端给完整 TextPattern，UIA1 只能看到 MSAA 桥（包围盒全空）。
+- HOOK 改进：优先 GetGUIThreadInfo（当前线程 + 前台窗口线程）再退回 GetCaretPos，
+  并去掉「必须有 GetFocus」的限制——Chromium 的焦点在渲染子窗口上，GetFocus 常为空。
+- 钩子 DLL 改为「扫 exe 同目录，取修改时间最新的 input-tip-hook*.dll」：已注入的进程
+  会锁住旧 DLL，Windows 不允许覆盖，升级只能换名并存。
+- 日志新增光标来源 src=（gti / inject / ia2 / uia / msaa / anchor），每 300ms 一条。
+
+待验证（需要前台应用配合）：
+
+- VSCode / Edge / Typora 聚焦输入时，四级来源里谁能稳定给出光标矩形；
+  中文组合输入期间（切换英文前）光标是否仍有值——这决定「初始中文锚定」怎么修。
+
 待办：
 
 - 在有真实 caret 的应用（Chrome/Edge/VSCode/Typora）里实测注入路径的坐标与跟随。

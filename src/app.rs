@@ -191,12 +191,13 @@ fn tick() {
             "caret",
             "debug",
             &format!(
-                "state={} caret=({},{}) {}x{} proc={proc_name}",
+                "state={} caret=({},{}) {}x{} src={} proc={proc_name}",
                 state.key(),
                 caret_rect.left,
                 caret_rect.top,
                 caret_rect.right - caret_rect.left,
-                caret_rect.bottom - caret_rect.top
+                caret_rect.bottom - caret_rect.top,
+                crate::caret::source()
             ),
         );
     }
@@ -289,7 +290,12 @@ fn tick() {
             log::write(
                 "app",
                 "debug",
-                &format!("文字牌显示于 ({x},{y}) {w}x{h}，caret=({},{})", caret_rect.left, caret_rect.top),
+                &format!(
+                    "文字牌显示于 ({x},{y}) {w}x{h}，caret=({},{}) src={}",
+                    caret_rect.left,
+                    caret_rect.top,
+                    crate::caret::source()
+                ),
             );
         }
         rt.last_state = Some(state);

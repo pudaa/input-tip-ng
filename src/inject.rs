@@ -75,17 +75,30 @@ fn shared() -> Option<*mut CaretShared> {
     })
 }
 
+/// 找钩子 DLL：接受任意 input-tip-hook*.dll / input_tip_hook*.dll，取修改时间最新的一个。
+///
+/// 用「扫目录 + 取最新」而不是写死文件名，是因为升级时旧 DLL 会被已注入的进程
+/// 锁住（Windows 不允许覆盖已加载的模块），只能以新文件名并存，靠时间戳选新版。
 fn dll_path() -> Option<std::path::PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    // cargo 输出的是 crate 名下划线命名；打包时也可能改名，两种都认
-    for name in ["input-tip-hook.dll", "input_tip_hook.dll"] {
-        let p = dir.join(name);
-        if p.exists() {
-            return Some(p);
+    let mut best: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+    for entry in std::fs::read_dir(dir).ok()? {
+        let Ok(entry) = entry else { continue };
+        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+        if !name.ends_with(".dll") {
+            continue;
+        }
+        if !(name.starts_with("input-tip-hook") || name.starts_with("input_tip_hook")) {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else { continue };
+        let Ok(modified) = meta.modified() else { continue };
+        if best.as_ref().map(|(t, _)| modified > *t).unwrap_or(true) {
+            best = Some((modified, entry.path()));
         }
     }
-    None
+    best.map(|(_, p)| p)
 }
 
 unsafe fn module_base(process: HANDLE, name: &str) -> Option<usize> {

@@ -73,6 +73,9 @@ Chromium/Electron/Qt 不通过公开 API 暴露文本光标，公开的 UIA/MSAA
 
 - 构建：`cargo build -p input-tip-hook --release`，把 `target/release/input_tip_hook.dll`
   复制成 `input-tip-hook.dll` 放到主程序同目录
+- DLL 名不再写死：程序会挑同目录下**修改时间最新**的 `input-tip-hook*.dll` /
+  `input_tip_hook*.dll`。已注入的进程会锁住旧 DLL（Windows 不允许覆盖已加载模块），
+  升级时请以新文件名并存，例如 `input-tip-hook-v3.dll`
 - 开启：配置里
 
 ```ini

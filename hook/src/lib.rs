@@ -11,6 +11,7 @@ use std::ffi::c_void;
 use std::sync::atomic::{AtomicIsize, Ordering};
 
 use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::System::Memory::{
     CreateFileMappingW, FILE_MAP_ALL_ACCESS, MapViewOfFile, OpenFileMappingW, PAGE_READWRITE,
 };
@@ -75,6 +76,62 @@ fn shared() -> Option<&'static mut CaretShared> {
     }
 }
 
+/// 在当前线程里取光标屏幕坐标（本函数运行在目标 UI 线程，GetCaretPos 才有意义）。
+///
+/// 先问 GetGUIThreadInfo：它给 hwndCaret + 客户区矩形，不依赖 GetFocus
+/// （Chromium/Electron 的焦点在渲染子窗口上，GetFocus 经常为空，之前就是被这条挡掉的）；
+/// 再退回 GetCaretPos，最后用 GetFocus 换算。
+unsafe fn caret_screen() -> Option<(i32, i32, i32)> {
+    unsafe {
+        let mut gti = GUITHREADINFO {
+            cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+            ..Default::default()
+        };
+        if GetGUIThreadInfo(
+            windows::Win32::System::Threading::GetCurrentThreadId(),
+            &mut gti,
+        )
+        .is_ok()
+            && !gti.hwndCaret.0.is_null()
+        {
+            let mut pt = POINT { x: gti.rcCaret.left, y: gti.rcCaret.top };
+            if ClientToScreen(gti.hwndCaret, &mut pt).as_bool() {
+                let height = (gti.rcCaret.bottom - gti.rcCaret.top).max(8);
+                return Some((pt.x, pt.y, height));
+            }
+        }
+        // Chromium 这类程序的光标可能挂在前台窗口所在线程（不一定等于当前线程）
+        let fg = windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow();
+        if !fg.0.is_null() {
+            let fg_tid = windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(fg, None);
+            if fg_tid != 0 && fg_tid != windows::Win32::System::Threading::GetCurrentThreadId() {
+                let mut gti2 = GUITHREADINFO {
+                    cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+                    ..Default::default()
+                };
+                if GetGUIThreadInfo(fg_tid, &mut gti2).is_ok() && !gti2.hwndCaret.0.is_null() {
+                    let mut pt = POINT { x: gti2.rcCaret.left, y: gti2.rcCaret.top };
+                    if ClientToScreen(gti2.hwndCaret, &mut pt).as_bool() {
+                        let height = (gti2.rcCaret.bottom - gti2.rcCaret.top).max(8);
+                        return Some((pt.x, pt.y, height));
+                    }
+                }
+            }
+        }
+        let mut pt = POINT::default();
+        if GetCaretPos(&mut pt).is_ok() {
+            let focus = GetFocus();
+            if !focus.0.is_null() {
+                let mut screen = pt;
+                if ClientToScreen(focus, &mut screen).as_bool() {
+                    return Some((screen.x, screen.y, 8));
+                }
+            }
+        }
+        None
+    }
+}
+
 unsafe extern "system" fn subclass_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if msg == HOOK_QUERY_MSG {
         CALLS.fetch_add(1, Ordering::SeqCst);
@@ -85,24 +142,9 @@ unsafe extern "system" fn subclass_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lp
             shared.left = 0;
             shared.top = 0;
             shared.height = 0;
-            let mut pt = POINT::default();
-            let focus = unsafe { GetFocus() };
-            if unsafe { GetCaretPos(&mut pt) }.is_ok() && !focus.0.is_null() {
-                let mut screen = pt;
-                let _ = unsafe { windows::Win32::Graphics::Gdi::ClientToScreen(focus, &mut screen) };
-                let mut gti = GUITHREADINFO {
-                    cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
-                    ..Default::default()
-                };
-                let _ = unsafe {
-                    GetGUIThreadInfo(
-                        windows::Win32::System::Threading::GetCurrentThreadId(),
-                        &mut gti,
-                    )
-                };
-                let height = (gti.rcCaret.bottom - gti.rcCaret.top).max(8);
-                shared.left = screen.x;
-                shared.top = screen.y;
+            if let Some((x, y, height)) = caret_screen() {
+                shared.left = x;
+                shared.top = y;
                 shared.width = 2;
                 shared.height = height;
             }

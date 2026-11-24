@@ -11,3 +11,6 @@
 .idea/
 .vscode/
 *.swp
+
+# 临时排查产物
+/.tmp/

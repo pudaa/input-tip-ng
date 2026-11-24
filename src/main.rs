@@ -45,6 +45,7 @@ input-tip-ng —— InputTip 的 Rust 重写版
   input-tip-ng --migrate <旧 config.ini>  从旧版配置迁移文字牌、白名单与运行参数
   input-tip-ng --gen-icon <输出 ico>  生成多尺寸应用图标（16~256）
   input-tip-ng --diag               打印当前前台窗口的光标探测全链路诊断
+  input-tip-ng --ia2-test <HWND>    对指定窗口做 IAccessible2 光标探测（不要求它在最前）
   input-tip-ng --inject-test <pid>    对指定进程验证注入式光标读取链路
   input-tip-ng --settings           打开设置窗口
   input-tip-ng --preview [CN|EN|CAPS|US|JP|KR]  在屏幕上预览一次文字牌（校色/校字号用）
@@ -82,6 +83,7 @@ fn main() -> ExitCode {
         "--migrate" => cmd_migrate(args.get(1).map(String::as_str)),
         "--gen-icon" => cmd_gen_icon(args.get(1).map(String::as_str)),
         "--diag" => with_com(cmd_diag),
+        "--ia2-test" => with_com(cmd_ia2_test),
         "--inject-test" => with_com(cmd_inject_test),
         "--settings" => with_com(cmd_settings),
         "--preview" => cmd_preview(args.get(1).map(String::as_str).unwrap_or("CN")),
@@ -305,6 +307,18 @@ fn cmd_diag() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+fn cmd_ia2_test() -> ExitCode {
+    let hwnd: isize = match std::env::args().nth(2).and_then(|s| s.parse().ok()) {
+        Some(h) => h,
+        None => {
+            eprintln!("用法: input-tip-ng --ia2-test <顶层窗口 HWND>");
+            return ExitCode::from(2);
+        }
+    };
+    println!("{}", caret::ia2_probe_at(windows::Win32::Foundation::HWND(hwnd as *mut core::ffi::c_void)));
+    ExitCode::SUCCESS
+}
+
 fn cmd_gen_icon(out: Option<&str>) -> ExitCode {
     let Some(out) = out else {
         eprintln!("用法: input-tip-ng --gen-icon <输出 .ico 路径>");
@@ -349,6 +363,7 @@ fn cmd_probe() -> ExitCode {
         println!("探测原始值: {}", ime::probe(fg));
         println!("判定状态: {}", state.key());
         println!("线程 UI 信息: {}", caret::probe());
+        println!("IA2 详情: {}", caret::ia2_probe());
         println!("UIA 详情: {}", caret::uia_probe());
         match caret::rect() {
             Some(c) => println!(

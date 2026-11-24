@@ -20,7 +20,7 @@ use windows::Win32::System::Ole::{
     SafeArrayAccessData, SafeArrayDestroy, SafeArrayGetUBound, SafeArrayUnaccessData,
 };
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationFocusChangedEventHandler,
+    CUIAutomation8, IUIAutomation, IUIAutomationElement, IUIAutomationFocusChangedEventHandler,
     IUIAutomationFocusChangedEventHandler_Impl, IUIAutomationTextPattern, IUIAutomationTextPattern2,
     IUIAutomationTextRange, TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start,
     TextUnit_Character, TextUnit_Line, UIA_TextPattern2Id, UIA_TextPatternId,
@@ -35,7 +35,9 @@ thread_local! {
 fn automation() -> Option<IUIAutomation> {
     AUTO.with(|slot| {
         if slot.borrow().is_none() {
-            let created = unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok() };
+            // 必须用 CUIAutomation8（UIA3）：Chromium 的 UIA 提供者只对 UIA3 客户端
+            // 暴露完整的 TextPattern；UIA1 只能看到 MSAA 桥，包围盒全空。
+            let created = unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER).ok() };
             *slot.borrow_mut() = created;
         }
         slot.borrow().clone()
