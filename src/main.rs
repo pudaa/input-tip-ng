@@ -22,6 +22,7 @@ mod process;
 mod state;
 mod symbol;
 mod tray;
+mod ui;
 
 use std::process::ExitCode;
 
@@ -45,6 +46,7 @@ input-tip-ng —— InputTip 的 Rust 重写版
   input-tip-ng --gen-icon <输出 ico>  生成多尺寸应用图标（16~256）
   input-tip-ng --diag               打印当前前台窗口的光标探测全链路诊断
   input-tip-ng --inject-test <pid>    对指定进程验证注入式光标读取链路
+  input-tip-ng --settings           打开设置窗口
   input-tip-ng --preview [CN|EN|CAPS|US|JP|KR]  在屏幕上预览一次文字牌（校色/校字号用）
   input-tip-ng --version             显示版本
   input-tip-ng --help                显示本帮助
@@ -81,6 +83,7 @@ fn main() -> ExitCode {
         "--gen-icon" => cmd_gen_icon(args.get(1).map(String::as_str)),
         "--diag" => with_com(cmd_diag),
         "--inject-test" => with_com(cmd_inject_test),
+        "--settings" => with_com(cmd_settings),
         "--preview" => cmd_preview(args.get(1).map(String::as_str).unwrap_or("CN")),
         "" | "--autostart" => cmd_run(cmd == "--autostart"),
         other => {
@@ -277,6 +280,11 @@ fn cmd_preview(state_key: &str) -> ExitCode {
         }
     }
     println!("预览结束（状态 {}，文字 {}，底色 0x{:06X}）", state.key(), text, bg);
+    ExitCode::SUCCESS
+}
+
+fn cmd_settings() -> ExitCode {
+    ui::run();
     ExitCode::SUCCESS
 }
 

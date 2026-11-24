@@ -25,6 +25,7 @@ const TRAY_GUID: GUID = GUID::from_u128(0x9F1C2D3A_5B4E_4C7D_8A90_1B2C3D4E5F60);
 
 pub enum MenuAction {
     TogglePause,
+    OpenSettings,
     OpenConfig,
     OpenLogs,
     Exit,
@@ -85,11 +86,13 @@ pub fn popup_menu(hwnd: HWND, paused: bool) -> MenuAction {
         };
         let pause_text = if paused { "恢复提示" } else { "暂停提示" };
         let pause = wide(pause_text);
-        let open_cfg = wide("打开配置");
+        let settings = wide("设置…");
+        let open_cfg = wide("打开配置文件");
         let open_log = wide("打开日志目录");
         let quit = wide("退出");
 
         let _ = AppendMenuW(menu, MF_STRING, 1, PCWSTR::from_raw(pause.as_ptr()));
+        let _ = AppendMenuW(menu, MF_STRING, 5, PCWSTR::from_raw(settings.as_ptr()));
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
         let _ = AppendMenuW(menu, MF_STRING, 2, PCWSTR::from_raw(open_cfg.as_ptr()));
         let _ = AppendMenuW(menu, MF_STRING, 3, PCWSTR::from_raw(open_log.as_ptr()));
@@ -123,6 +126,7 @@ pub fn popup_menu(hwnd: HWND, paused: bool) -> MenuAction {
             2 => MenuAction::OpenConfig,
             3 => MenuAction::OpenLogs,
             4 => MenuAction::Exit,
+            5 => MenuAction::OpenSettings,
             _ => MenuAction::None,
         }
     }

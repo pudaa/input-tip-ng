@@ -346,6 +346,12 @@ fn handle_menu(hwnd: HWND) {
             let _ = tray::update_tip(hwnd, tip);
             log::info("tray", &format!("提示已{}", if now_paused { "暂停" } else { "恢复" }));
         }
+        tray::MenuAction::OpenSettings => {
+            // 单开一个进程跑设置窗口，避免和常驻进程的消息循环互相拖累
+            if let Ok(exe) = std::env::current_exe() {
+                let _ = std::process::Command::new(exe).arg("--settings").spawn();
+            }
+        }
         tray::MenuAction::OpenConfig => {
             let path = crate::log::root_dir().join("config.ini");
             let _ = std::process::Command::new("notepad.exe").arg(path).spawn();
