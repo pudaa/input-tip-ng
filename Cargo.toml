@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 # 只依赖微软官方绑定，不引入 UI 框架与运行时：单文件、小体积、可离线构建
+windows-core = "0.62"
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Security",

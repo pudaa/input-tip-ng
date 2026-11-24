@@ -461,6 +461,15 @@ pub fn run(autostarted: bool) -> i32 {
             windows::core::w!("TaskbarCreated"),
         );
 
+        // 注册 UIA 焦点事件处理器：Chromium 检测到 UIA 客户端后才会打开无障碍树，
+        // 否则 Chrome/Edge/Typora 的 TextPattern 永远不可用（拿不到光标）。
+        let wired = caret::ensure_event_handler();
+        log::write(
+            "app",
+            if wired { "info" } else { "warn" },
+            if wired { "UIA 事件处理器已注册（唤醒 Chromium 无障碍树）" } else { "UIA 事件处理器注册失败" },
+        );
+
         let symbol_hwnd = symbol::create();
         if symbol_hwnd.0.is_null() {
             log::error("app", "创建文字牌窗口失败，状态提示将不可用");
