@@ -127,6 +127,10 @@ pub extern "system" fn ITNGStart(hwnd_value: usize) -> i32 {
         if hwnd.0.is_null() {
             return -1;
         }
+        // 已经子类化过就别再来一次（否则 OLD_PROC 指向自己，普通消息会无限递归）
+        if OLD_PROC != 0 && TARGET == hwnd_value as isize {
+            return 0;
+        }
         TARGET = hwnd_value as isize;
         let old = SetWindowLongPtrW(hwnd, GWLP_WNDPROC, subclass_proc as usize as isize);
         if old == 0 {

@@ -344,6 +344,10 @@ pub fn caret() -> Option<RECT> {
         if shared.seq != seq || shared.width <= 0 {
             return None;
         }
+        // 目标没有文本光标时 GetCaretPos 会给 (0,0)，这种脏数据要丢掉
+        if shared.left <= 0 && shared.top <= 0 {
+            return None;
+        }
         Some(RECT {
             left: shared.left,
             top: shared.top,
