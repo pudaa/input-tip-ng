@@ -2,6 +2,12 @@
 //!
 //! 命令行与常驻进程共用同一套自启逻辑，方便排障：
 //! 出问题时先跑 --check-autostart 看结构化状态，再决定重装还是看日志。
+//!
+//! 子系统：debug 用控制台（开发时能直接看输出），release 用 GUI 子系统
+//! ——常驻进程由计划任务在登录时拉起，绝不能闪一个黑框；
+//! release 下从命令行调用时再 AttachConsole 到父进程，把 stdout/stderr 接回去。
+
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
 mod autostart;
@@ -30,6 +36,7 @@ input-tip-ng —— InputTip 的 Rust 重写版
 ";
 
 fn main() -> ExitCode {
+    attach_parent_console();
     // 控制台默认 GBK，直接输出 UTF-8 会乱码；无控制台时调用无害
     unsafe {
         let _ = SetConsoleOutputCP(65001);
@@ -59,6 +66,41 @@ fn main() -> ExitCode {
         }
     }
 }
+
+/// release 是 GUI 子系统：被 cmd/PowerShell 调起时把父进程的控制台接回来，
+/// 否则 println! 无处可去（stdout 句柄为空）。
+#[cfg(not(debug_assertions))]
+fn attach_parent_console() {
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+    use windows::Win32::System::Console::{
+        ATTACH_PARENT_PROCESS, AttachConsole, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle,
+    };
+    use windows::core::w;
+
+    unsafe {
+        if AttachConsole(ATTACH_PARENT_PROCESS).is_err() {
+            return;
+        }
+        if let Ok(h) = CreateFileW(
+            w!("CONOUT$"),
+            windows::Win32::Foundation::GENERIC_WRITE.0,
+            FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            None,
+        ) {
+            let _ = SetStdHandle(STD_OUTPUT_HANDLE, h);
+            let _ = SetStdHandle(STD_ERROR_HANDLE, h);
+        }
+    }
+}
+
+/// debug 下本身就是控制台子系统，无需处理
+#[cfg(debug_assertions)]
+fn attach_parent_console() {}
 
 /// Task Scheduler 走 COM，需要先初始化单元；命令行工具用完即退，故集中在这里管理。
 fn with_com(f: impl FnOnce() -> ExitCode) -> ExitCode {
