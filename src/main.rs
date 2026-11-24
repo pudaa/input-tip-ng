@@ -75,11 +75,20 @@ fn attach_parent_console() {
         CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_WRITE, OPEN_EXISTING,
     };
     use windows::Win32::System::Console::{
-        ATTACH_PARENT_PROCESS, AttachConsole, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle,
+        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE,
+        SetStdHandle,
     };
     use windows::core::w;
 
     unsafe {
+        // 已经被重定向到文件/管道时 stdout 有效，不能再改成 CONOUT$（否则输出会丢进控制台）
+        let has_stdout = match GetStdHandle(STD_OUTPUT_HANDLE) {
+            Ok(h) => !h.is_invalid() && !h.0.is_null(),
+            Err(_) => false,
+        };
+        if has_stdout {
+            return;
+        }
         if AttachConsole(ATTACH_PARENT_PROCESS).is_err() {
             return;
         }
