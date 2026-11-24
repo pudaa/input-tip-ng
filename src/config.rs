@@ -27,7 +27,7 @@ const DEFAULT_ENTRIES: &[(&str, &str, &str)] = &[
     ("symbol", "font", "霞鹜文楷等宽"),
     ("symbol", "size", "11"),
     ("symbol", "weight", "500"),
-    ("symbol", "opacity", "100"),
+    ("symbol", "opacity", "90"),
     ("symbol", "offset_x", "8"),
     ("symbol", "offset_y", "-20"),
     ("symbol", "hide_delay_ms", "2500"),

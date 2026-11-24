@@ -88,7 +88,8 @@ fn uia_caret() -> Option<RECT> {
     }
 }
 
-fn msaa_caret() -> Option<RECT> {
+/// 对单个窗口问「caret 在哪」
+fn msaa_caret_of(hwnd: HWND) -> Option<RECT> {
     use windows::core::{GUID, Interface};
     use windows::Win32::System::Variant::VARIANT;
     use windows::Win32::UI::Accessibility::{AccessibleObjectFromWindow, IAccessible};
@@ -97,12 +98,11 @@ fn msaa_caret() -> Option<RECT> {
     const OBJID_CARET: u32 = 0xFFFF_FFF8;
 
     unsafe {
-        let fg = GetForegroundWindow();
-        if fg.0.is_null() {
+        if hwnd.0.is_null() {
             return None;
         }
         let mut raw: *mut core::ffi::c_void = std::ptr::null_mut();
-        AccessibleObjectFromWindow(fg, OBJID_CARET, &IID_IACCESSIBLE, &mut raw).ok()?;
+        AccessibleObjectFromWindow(hwnd, OBJID_CARET, &IID_IACCESSIBLE, &mut raw).ok()?;
         if raw.is_null() {
             return None;
         }
@@ -115,6 +115,62 @@ fn msaa_caret() -> Option<RECT> {
         }
         Some(RECT { left: l, top: t, right: l + w, bottom: t + h })
     }
+}
+
+/// Chromium/Electron 的 caret 对象挂在子窗口（Chrome_RenderWidgetHostHWND）上，
+/// 顶层窗口问不到；把前台窗口的所有子窗口都问一遍。
+fn msaa_caret() -> Option<RECT> {
+    use windows::Win32::UI::WindowsAndMessaging::{EnumChildWindows, GetWindowThreadProcessId};
+
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.0.is_null() {
+            return None;
+        }
+        // 先问焦点窗口与顶层窗口
+        let mut gti = GUITHREADINFO {
+            cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+            ..Default::default()
+        };
+        if GetGUIThreadInfo(0, &mut gti).is_ok() {
+            if let Some(r) = msaa_caret_of(gti.hwndFocus) {
+                return Some(r);
+            }
+        }
+        if let Some(r) = msaa_caret_of(fg) {
+            return Some(r);
+        }
+
+        // 再枚举子窗口（限制数量，避免慢）
+        const CHILD_MAX: usize = 24;
+        static mut CHILDREN: [isize; CHILD_MAX] = [0; CHILD_MAX];
+        static mut CHILD_COUNT: usize = 0;
+        unsafe extern "system" fn collect(hwnd: HWND, _: windows::Win32::Foundation::LPARAM) -> windows::core::BOOL {
+            unsafe {
+                if CHILD_COUNT < CHILD_MAX {
+                    CHILDREN[CHILD_COUNT] = hwnd.0 as isize;
+                    CHILD_COUNT += 1;
+                }
+            }
+            windows::core::BOOL(1)
+        }
+        CHILD_COUNT = 0;
+        let _ = EnumChildWindows(Some(fg), Some(collect), windows::Win32::Foundation::LPARAM(0));
+        let mut fg_pid = 0u32;
+        GetWindowThreadProcessId(fg, Some(&mut fg_pid));
+        for i in 0..CHILD_COUNT {
+            let h = HWND(CHILDREN[i] as *mut core::ffi::c_void);
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(h, Some(&mut pid));
+            if pid != fg_pid {
+                continue;
+            }
+            if let Some(r) = msaa_caret_of(h) {
+                return Some(r);
+            }
+        }
+    }
+    None
 }
 
 fn uia_focused_element() -> Option<(i32, RECT)> {
@@ -171,7 +227,9 @@ fn uia_element_anchor() -> Option<RECT> {
         if ew <= 0 || eh <= 0 || (ew * eh) >= (ww * wh / 2) {
             return None; // 整窗大小的元素不是输入框
         }
-        Some(RECT { left: rect.right, top: rect.bottom, right: rect.right + 2, bottom: rect.bottom + 2 })
+        // 锚在输入框右缘、垂直居中（之前贴右下角，看起来像跑到框外）
+        let mid_y = rect.top + (rect.bottom - rect.top) / 2;
+        Some(RECT { left: rect.right, top: mid_y, right: rect.right + 2, bottom: mid_y + 2 })
     }
 }
 
@@ -237,6 +295,59 @@ pub fn probe() -> String {
         };
         format!("{gti_result} | {uia} | {msaa} | {anchor} | {focused}")
     }
+}
+
+/// 全链路诊断：给不出现提示的程序用，一次性说明每一级为什么失败
+pub fn diag() -> String {
+    use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetWindowTextW};
+
+    let mut out = String::new();
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.0.is_null() {
+            return "前台窗口为空".to_string();
+        }
+        let mut class = [0u16; 256];
+        let n = GetClassNameW(fg, &mut class);
+        let cls = String::from_utf16_lossy(&class[..n.max(0) as usize]);
+        let mut title = [0u16; 256];
+        let t = GetWindowTextW(fg, &mut title);
+        let ttl = String::from_utf16_lossy(&title[..t.max(0) as usize]);
+        let proc_name = crate::process::name(fg).unwrap_or_default();
+        out.push_str(&format!("前台: {proc_name} class={cls} title={ttl:?}\n"));
+        out.push_str(&format!("探测: {}\n", probe()));
+        out.push_str(&format!(
+            "UIA 焦点: {} | 文本光标: {} | 元素锚点: {}\n",
+            uia_focused_element()
+                .map(|(t, r)| format!("type={t} rect=({},{}) {}x{}", r.left, r.top, r.right - r.left, r.bottom - r.top))
+                .unwrap_or_else(|| "不可用".into()),
+            uia_caret()
+                .map(|r| format!("({},{}) {}x{}", r.left, r.top, r.right - r.left, r.bottom - r.top))
+                .unwrap_or_else(|| "不可用".into()),
+            uia_element_anchor()
+                .map(|r| format!("({},{})", r.left, r.top))
+                .unwrap_or_else(|| "不可用".into()),
+        ));
+        out.push_str(&format!("最终: {}\n", match rect() {
+            Some(r) => format!("({},{}) {}x{}", r.left, r.top, r.right - r.left, r.bottom - r.top),
+            None => "无 caret".to_string(),
+        }));
+        if let Some((t, r)) = uia_focused_element() {
+            out.push_str(&format!(
+                "焦点元素: type={t} 面积占窗口={}\n",
+                {
+                    let mut win = RECT::default();
+                    let _ = windows::Win32::UI::WindowsAndMessaging::GetWindowRect(fg, &mut win);
+                    let ww = (win.right - win.left).max(1) as i64;
+                    let wh = (win.bottom - win.top).max(1) as i64;
+                    let ew = (r.right - r.left).max(0) as i64;
+                    let eh = (r.bottom - r.top).max(0) as i64;
+                    format!("{}%", (ew * eh) * 100 / (ww * wh))
+                }
+            ));
+        }
+    }
+    out
 }
 
 /// caret 所属窗口（诊断用）

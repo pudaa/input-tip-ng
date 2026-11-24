@@ -48,6 +48,8 @@ struct Runtime {
     last_show: Option<Instant>,
     /// 只在用户真的在输入时显示（点一下窗口不算）
     idle_limit_ms: u32,
+    /// 上一次「输入中但取不到 caret」的诊断时间（限流用）
+    last_miss: Option<Instant>,
     /// 位置补间：起止点与开始时间
     tween: Option<(i32, i32, i32, i32, Instant)>,
 }
@@ -164,6 +166,12 @@ fn tick() {
         hide(rt);
         rt.last_state = None;
         rt.last_caret = None;
+        // 用户在输入却拿不到光标：限流记一次诊断，方便事后定位是哪个程序不给
+        let now = Instant::now();
+        if rt.last_miss.map(|t| now.duration_since(t).as_secs() >= 5).unwrap_or(true) {
+            rt.last_miss = Some(now);
+            log::write("caret", "debug", &caret::diag().replace('\n', " | "));
+        }
         return;
     };
 
@@ -478,6 +486,7 @@ pub fn run(autostarted: bool) -> i32 {
                 last_state: None,
                 last_caret: None,
                 last_show: None,
+                last_miss: None,
                 tween: None,
             });
         }
